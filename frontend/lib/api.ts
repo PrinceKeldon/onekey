@@ -3,7 +3,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://onekey-api-25cg.onre
 export function mediaUrl(path: string) {
   // Supabase Storage returns an absolute public URL. Keep it intact;
   // only prefix backend-relative media paths.
-  if (/^https?:\\/\\//i.test(path)) return path;
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
   return `${API_URL}${path}`;
 }
 
