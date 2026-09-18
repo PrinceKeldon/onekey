@@ -68,7 +68,6 @@ function KnownThing({ thing }: { thing: Thing }) {
   );
 }
 
-
 function TransferOwnership({
   code,
   currentOwnerName,
@@ -381,4 +380,9 @@ const btnStyle: React.CSSProperties = {
   background: "#1a1a1d",
   color: "#f2f2f2",
   cursor: "pointer",
+};
+
+const secondaryBtn: React.CSSProperties = {
+  ...btnStyle,
+  background: "transparent",
 };
