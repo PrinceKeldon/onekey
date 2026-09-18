@@ -60,6 +60,12 @@ class DocumentOut(BaseModel):
         from_attributes = True
 
 
+class TransferRequest(BaseModel):
+    # The current owner is proven by the verified Supabase session.
+    new_owner_contact: str
+    new_owner_display_name: str
+
+
 class ThingPublic(BaseModel):
     onekey_code: str
     name: str
