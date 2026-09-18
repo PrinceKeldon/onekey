@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { getThing, checkIdentity, claimThing, mediaUrl, requestTransfer, confirmTransfer } from "../../../lib/api";
-import { supabase } from "../../../lib/supabaseClient";
 
 type Thing = {
   onekey_code: string;
@@ -45,33 +44,22 @@ function KnownThing({ thing }: { thing: Thing }) {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const transferId = params.get("transfer");
-    const role = params.get("role");
-    if (!transferId || (role !== "current" && role !== "new")) return;
+    const token = params.get("token");
+    if (!transferId || !token) return;
 
     let active = true;
-    supabase.auth.getSession().then(async ({ data }) => {
-      if (!active) return;
-      const token = data.session?.access_token;
-      if (!token) {
-        setConfirmationError("Please open the confirmation link from the email again.");
-        return;
-      }
-      try {
-        const result = await confirmTransfer(transferId, role, token);
+    confirmTransfer(transferId, token)
+      .then((result) => {
         if (!active) return;
         if (result.status === "completed") {
-          setConfirmationMessage("Ownership transfer confirmed. The ONEKEY record is now updated.");
+          setConfirmationMessage(result.message || "Ownership transfer confirmed. The ONEKEY record is now updated.");
         } else {
-          setConfirmationMessage(
-            role === "current"
-              ? "Your confirmation is recorded. The new owner still needs to confirm."
-              : "Your confirmation is recorded. The current owner still needs to confirm.",
-          );
+          setConfirmationMessage(result.message || "Your confirmation is recorded.");
         }
-      } catch (err: any) {
+      })
+      .catch((err: any) => {
         if (active) setConfirmationError(err.message || "Transfer confirmation failed.");
-      }
-    });
+      });
 
     return () => {
       active = false;
@@ -187,25 +175,7 @@ function TransferOwnership({
         new_owner_display_name: newOwnerName.trim(),
       });
 
-      const origin = window.location.origin;
-      const currentRedirect = `${origin}/t/${code}?transfer=${encodeURIComponent(result.transfer_id)}&role=current`;
-      const newRedirect = `${origin}/t/${code}?transfer=${encodeURIComponent(result.transfer_id)}&role=new`;
-
-      const [currentEmailResult, newEmailResult] = await Promise.all([
-        supabase.auth.signInWithOtp({
-          email: currentOwnerContact.trim(),
-          options: { emailRedirectTo: currentRedirect },
-        }),
-        supabase.auth.signInWithOtp({
-          email: newOwnerContact.trim(),
-          options: { emailRedirectTo: newRedirect },
-        }),
-      ]);
-
-      if (currentEmailResult.error) throw currentEmailResult.error;
-      if (newEmailResult.error) throw newEmailResult.error;
-
-      setSent(true);
+      if (!result.transfer_id) throw new Error("Could not create transfer request.");
     } catch (err: any) {
       setError(err.message || "Could not start the transfer.");
     } finally {
