@@ -53,7 +53,8 @@ class PhotoOut(BaseModel):
 
 class DocumentOut(BaseModel):
     label: str
-    url: str
+    url: Optional[str] = None
+    body: Optional[str] = None
     uploaded_at: datetime
 
     class Config:

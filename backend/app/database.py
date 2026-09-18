@@ -79,6 +79,30 @@ def ensure_schema_compatibility():
               )
         """))
 
+        # Documents can now be a written note instead of / in addition to a
+        # file. Older databases have url NOT NULL from before this change —
+        # relax that and add the "must have something" check constraint.
+        conn.execute(text("""
+            ALTER TABLE documents
+            ADD COLUMN IF NOT EXISTS body text
+        """))
+        conn.execute(text("""
+            ALTER TABLE documents
+            ALTER COLUMN url DROP NOT NULL
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'ck_document_has_content'
+                ) THEN
+                    ALTER TABLE documents
+                    ADD CONSTRAINT ck_document_has_content
+                    CHECK (url IS NOT NULL OR body IS NOT NULL);
+                END IF;
+            END $$;
+        """))
+
 
 
 def get_db():

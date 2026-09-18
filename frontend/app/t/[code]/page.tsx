@@ -12,7 +12,7 @@ type Thing = {
   identity_type: string;
   identity_value: string;
   history: { type: string; detail?: string; created_at: string }[];
-  documents: { label: string; url: string; uploaded_at: string }[];
+  documents: { label: string; url: string | null; body: string | null; uploaded_at: string }[];
   photos: { url: string; is_primary: boolean; created_at: string }[];
 };
 
@@ -78,11 +78,20 @@ function KnownThing({ thing, code, onUpdated }: { thing: Thing; code: string; on
           <h3 style={{ marginTop: "1.5rem" }}>Documents</h3>
           <ul style={{ paddingLeft: "1.2rem", opacity: 0.85 }}>
             {thing.documents.map((d, i) => (
-              <li key={i}>
-                <a href={mediaUrl(d.url)} target="_blank" rel="noreferrer" style={{ color: "#8ab4f8" }}>
-                  {d.label}
-                </a>{" "}
+              <li key={i} style={{ marginBottom: "0.4rem" }}>
+                {d.url ? (
+                  <a href={mediaUrl(d.url)} target="_blank" rel="noreferrer" style={{ color: "#8ab4f8" }}>
+                    {d.label}
+                  </a>
+                ) : (
+                  <strong>{d.label}</strong>
+                )}{" "}
                 · {new Date(d.uploaded_at).toLocaleDateString()}
+                {d.body && (
+                  <p style={{ margin: "0.2rem 0 0", opacity: 0.75, fontSize: "0.9rem", whiteSpace: "pre-wrap" }}>
+                    {d.body}
+                  </p>
+                )}
               </li>
             ))}
           </ul>
@@ -109,6 +118,7 @@ function Row({ label, value }: { label: string; value: string }) {
 function AddDocumentPanel({ code, onUpdated }: { code: string; onUpdated: () => Promise<void> }) {
   const [open, setOpen] = useState(false);
   const [label, setLabel] = useState("");
+  const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [ownerContact, setOwnerContact] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -116,17 +126,19 @@ function AddDocumentPanel({ code, onUpdated }: { code: string; onUpdated: () => 
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!file) return setError("Choose a file.");
+    if (!file && !note.trim()) return setError("Add a file, a note, or both.");
     setSubmitting(true);
     setError(null);
     try {
       const form = new FormData();
       form.append("label", label);
       form.append("owner_contact", ownerContact);
-      form.append("file", file);
+      if (note.trim()) form.append("body", note.trim());
+      if (file) form.append("file", file);
       await addDocument(code, form);
       await onUpdated();
       setLabel("");
+      setNote("");
       setFile(null);
       setOwnerContact("");
       setOpen(false);
@@ -153,19 +165,32 @@ function AddDocumentPanel({ code, onUpdated }: { code: string; onUpdated: () => 
         <input
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder="Receipt, warranty, repair invoice…"
+          placeholder="Receipt, repair, note…"
           required
           style={inputStyle}
         />
       </label>
       <label>
-        File
-        <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} required style={inputStyle} />
+        Note (optional — no file needed)
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="Any additional info worth recording — condition, a repair, who serviced it…"
+          rows={3}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+        />
+      </label>
+      <label>
+        File (optional)
+        <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} style={inputStyle} />
       </label>
       <label>
         Your email or phone (proves you're the owner)
         <input value={ownerContact} onChange={(e) => setOwnerContact(e.target.value)} required style={inputStyle} />
       </label>
+      <p style={{ opacity: 0.5, fontSize: "0.8rem", margin: 0 }}>
+        The date is stamped automatically when this is saved — there's no way to backdate an entry.
+      </p>
 
       {error && <p style={{ color: "#f28b82", margin: 0 }}>{error}</p>}
 

@@ -65,12 +65,18 @@ class Photo(Base):
 
 class Document(Base):
     __tablename__ = "documents"
+    __table_args__ = (
+        # A ledger entry has to carry something — a file, a written note, or
+        # both. Neither present means nothing was actually recorded.
+        CheckConstraint("url is not null or body is not null", name="ck_document_has_content"),
+    )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     thing_id = Column(UUID(as_uuid=False), ForeignKey("things.id", ondelete="CASCADE"), nullable=False)
-    url = Column(String, nullable=False)
+    url = Column(String, nullable=True)   # Supabase Storage URL — null for a note-only entry
+    body = Column(Text, nullable=True)    # written note — null for a file-only entry
     label = Column(String, nullable=False)
-    uploaded_at = Column(DateTime, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, default=datetime.utcnow)  # server-set only, never client-supplied
 
     thing = relationship("Thing", back_populates="documents")
 

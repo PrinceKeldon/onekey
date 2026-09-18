@@ -204,7 +204,8 @@ def add_document(
     onekey_code: str,
     label: str = Form(...),
     owner_contact: str = Form(...),
-    file: UploadFile = File(...),
+    body: str = Form(None),
+    file: UploadFile = File(None),
     db: Session = Depends(get_db),
 ):
     thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
@@ -217,25 +218,34 @@ def add_document(
     if _normalize_contact(owner_contact) != thing.owner.contact:
         raise HTTPException(403, "Only the current owner can add documents to this record.")
 
-    file_bytes = file.file.read()
-    storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
-    try:
-        supabase = get_storage_client()
-        file_options = {
-            "content-type": file.content_type or "application/octet-stream",
-            "upsert": "false",
-        }
-        supabase.storage.from_(settings.storage_bucket).upload(
-            storage_path,
-            file_bytes,
-            file_options=file_options,
-        )
-        url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
-    except Exception as exc:
-        db.rollback()
-        raise HTTPException(502, f"Document storage upload failed: {exc}") from exc
+    note = body.strip() if body else None
+    if not file and not note:
+        raise HTTPException(400, "Provide a file, a written note, or both.")
 
-    doc = models.Document(thing_id=thing.id, url=url, label=label)
+    url = None
+    if file:
+        file_bytes = file.file.read()
+        storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
+        try:
+            supabase = get_storage_client()
+            file_options = {
+                "content-type": file.content_type or "application/octet-stream",
+                "upsert": "false",
+            }
+            supabase.storage.from_(settings.storage_bucket).upload(
+                storage_path,
+                file_bytes,
+                file_options=file_options,
+            )
+            url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
+        except Exception as exc:
+            db.rollback()
+            raise HTTPException(502, f"Document storage upload failed: {exc}") from exc
+
+    # uploaded_at is never taken from the client — it's the column default,
+    # set by the database at insert time. That's what makes the ledger's
+    # dates mean something rather than just look like they do.
+    doc = models.Document(thing_id=thing.id, url=url, body=note, label=label)
     db.add(doc)
     db.add(models.HistoryEvent(
         thing_id=thing.id, type="document_added", actor_id=thing.owner_id, detail=label

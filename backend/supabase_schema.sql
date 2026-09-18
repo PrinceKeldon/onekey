@@ -37,9 +37,11 @@ create index if not exists idx_photos_phash on photos(phash);
 create table if not exists documents (
     id uuid primary key default gen_random_uuid(),
     thing_id uuid not null references things(id) on delete cascade,
-    url text not null,
+    url text,
+    body text,
     label text not null,
-    uploaded_at timestamptz not null default now()
+    uploaded_at timestamptz not null default now(),
+    constraint ck_document_has_content check (url is not null or body is not null)
 );
 
 create table if not exists history_events (
