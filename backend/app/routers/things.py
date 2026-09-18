@@ -2,17 +2,37 @@ import uuid
 import mimetypes
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Header
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.database import get_db, settings, get_storage_client
+from app.database import get_db, settings, get_storage_client, get_auth_client
 from app import models, schemas
 from app.utils.idgen import generate_onekey_code, generate_qr_tag_value
 from app.utils.phash import compute_phash, hamming_distance
 
 router = APIRouter(prefix="/things", tags=["things"])
 
+
+
+
+
+
+def get_authenticated_email(authorization: str | None = Header(None)) -> str:
+    """Verify the Supabase session token and return the signed-in email."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(401, "Sign in required to do this. Missing Authorization header.")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        user_response = get_auth_client().auth.get_user(token)
+    except Exception:
+        raise HTTPException(401, "Your session has expired or is invalid. Please sign in again.")
+
+    user = getattr(user_response, "user", None)
+    email = getattr(user, "email", None) if user else None
+    if not email:
+        raise HTTPException(401, "Your session has expired or is invalid. Please sign in again.")
+    return email.strip().lower()
 
 
 def _get_or_create_user(db: Session, contact: str, display_name: str) -> models.User:
@@ -177,6 +197,58 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
     if not thing:
         raise HTTPException(404, "No ONEKEY record found for this code. It may be unclaimed.")
 
+    return schemas.ThingPublic(
+        onekey_code=thing.onekey_code,
+        name=thing.name,
+        status=thing.status,
+        owner_display_name=thing.owner.display_name,
+        created_at=thing.created_at,
+        history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
+        documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
+        photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
+    )
+
+
+
+
+
+@router.post("/{onekey_code}/transfer", response_model=schemas.ThingPublic)
+def transfer_thing(
+    onekey_code: str,
+    payload: schemas.TransferRequest,
+    authenticated_email: str = Depends(get_authenticated_email),
+    db: Session = Depends(get_db),
+):
+    thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
+    if not thing:
+        raise HTTPException(404, "Thing not found")
+
+    # The caller must be signed in as the email currently registered to this ONEKEY.
+    owner_contact = thing.owner.contact.strip().lower()
+    if owner_contact != authenticated_email:
+        raise HTTPException(
+            403,
+            "Only the current owner can transfer this record.",
+        )
+
+    new_contact = payload.new_owner_contact.strip().lower()
+    if not new_contact:
+        raise HTTPException(400, "New owner contact is required.")
+    if new_contact == owner_contact:
+        raise HTTPException(400, "This person already owns this ONEKEY.")
+
+    new_owner = _get_or_create_user(db, new_contact, payload.new_owner_display_name.strip())
+    previous_owner = thing.owner
+    thing.owner_id = new_owner.id
+
+    db.add(models.HistoryEvent(
+        thing_id=thing.id,
+        type="ownership_transferred",
+        actor_id=previous_owner.id,
+        detail=f"{previous_owner.display_name} → {new_owner.display_name}",
+    ))
+    db.commit()
+    db.refresh(thing)
     return schemas.ThingPublic(
         onekey_code=thing.onekey_code,
         name=thing.name,
