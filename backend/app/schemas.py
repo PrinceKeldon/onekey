@@ -10,7 +10,7 @@ class IdentityCheckRequest(BaseModel):
 
 class IdentityCheckResponse(BaseModel):
     available: bool
-    existing_onekey_code: Optional[str] = None
+    existing_onekey_code: Optional[str] = None  # set if already claimed, so caller can link to it
 
 
 class ClaimRequest(BaseModel):
@@ -18,7 +18,7 @@ class ClaimRequest(BaseModel):
     owner_contact: str
     owner_display_name: str
     identity_type: Literal["serial", "barcode", "qr_tag"]
-    identity_value: Optional[str] = None
+    identity_value: Optional[str] = None  # required for serial/barcode; auto-generated for qr_tag
 
 
 class PhotoWarning(BaseModel):
@@ -42,6 +42,15 @@ class HistoryEventOut(BaseModel):
         from_attributes = True
 
 
+class DocumentOut(BaseModel):
+    label: str
+    url: str
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class PhotoOut(BaseModel):
     url: str
     is_primary: bool
@@ -59,6 +68,12 @@ class DocumentOut(BaseModel):
 
     class Config:
         from_attributes = True
+class TransferRequest(BaseModel):
+    # No current_owner_contact field anymore — who's transferring is now
+    # proven by the verified session (Authorization header), not a
+    # self-reported string. See get_authenticated_email in routers/things.py.
+    new_owner_contact: str
+    new_owner_display_name: str
 
 
 class ThingPublic(BaseModel):
@@ -75,9 +90,3 @@ class ThingPublic(BaseModel):
 
     class Config:
         from_attributes = True
-
-
-class TransferResponse(BaseModel):
-    onekey_code: str
-    previous_owner_display_name: str
-    new_owner_display_name: str

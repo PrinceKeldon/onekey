@@ -1,17 +1,17 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://onekey-api-25cg.onrender.com";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export function mediaUrl(path: string) {
-  // Supabase Storage returns an absolute public URL. Keep it intact;
-  // only prefix backend-relative media paths.
+  if (!path) return path;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
   return `${API_URL}${path}`;
 }
 
 export async function checkIdentity(identity_type: "serial" | "barcode", identity_value: string) {
+  const normalizedValue = identity_value.trim().toUpperCase();
   const res = await fetch(`${API_URL}/things/check-identity`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identity_type, identity_value }),
+    body: JSON.stringify({ identity_type, identity_value: normalizedValue }),
   });
   if (!res.ok) throw new Error("check-identity failed");
   return res.json() as Promise<{ available: boolean; existing_onekey_code?: string }>;
@@ -37,13 +37,24 @@ export async function addDocument(code: string, form: FormData) {
   const res = await fetch(`${API_URL}/things/${code}/documents`, { method: "POST", body: form });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "add document failed");
+    throw new Error(body.detail || "adding document failed");
   }
   return res.json();
 }
 
-export async function transferOwnership(code: string, form: FormData) {
-  const res = await fetch(`${API_URL}/things/${code}/transfer`, { method: "POST", body: form });
+export async function transferThing(
+  code: string,
+  accessToken: string,
+  payload: { new_owner_contact: string; new_owner_display_name: string }
+) {
+  const res = await fetch(`${API_URL}/things/${code}/transfer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || "transfer failed");
