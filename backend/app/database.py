@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""  # used to verify user session tokens (auth), NOT for storage
     storage_bucket: str = "onekey-media"
     phash_warning_threshold: int = 8
+    resend_api_key: str = ""
+    email_from: str = ""
+    public_app_url: str = "https://onekey-keldontechnolog.vercel.app"
+    transfer_expiry_hours: int = 24
 
     class Config:
         env_file = ".env"
@@ -97,6 +101,29 @@ def ensure_schema_compatibility():
                 CONSTRAINT ck_transfer_status
                     CHECK (status IN ('pending','completed','cancelled','expired'))
             )
+        """))
+
+        # Transfer tokens are stored only as hashes; raw values are sent only by email.
+        conn.execute(text("""
+            ALTER TABLE ownership_transfers
+            ADD COLUMN IF NOT EXISTS current_owner_token_hash text
+        """))
+        conn.execute(text("""
+            ALTER TABLE ownership_transfers
+            ADD COLUMN IF NOT EXISTS new_owner_token_hash text
+        """))
+        conn.execute(text("""
+            ALTER TABLE ownership_transfers
+            ADD COLUMN IF NOT EXISTS expires_at timestamp
+        """))
+        conn.execute(text("""
+            UPDATE ownership_transfers
+            SET expires_at = COALESCE(expires_at, created_at + interval '24 hours')
+            WHERE expires_at IS NULL
+        """))
+        conn.execute(text("""
+            ALTER TABLE ownership_transfers
+            ALTER COLUMN expires_at SET NOT NULL
         """))
 
         # Documents can now be a written note instead of / in addition to a
