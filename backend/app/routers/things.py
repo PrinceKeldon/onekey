@@ -88,17 +88,17 @@ def claim_thing(
     onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
     storage_path = f"things/{onekey_code}/photos/{uuid.uuid4()}_{photo.filename or 'upload'}"
     try:
-        storage = get_storage_client()
+        supabase = get_storage_client()
         file_options = {
             "content-type": photo.content_type or "application/octet-stream",
             "upsert": "false",
         }
-        storage.from_(settings.storage_bucket).upload(
+        supabase.storage.from_(settings.storage_bucket).upload(
             storage_path,
             image_bytes,
             file_options=file_options,
         )
-        photo_url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+        photo_url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
     except Exception as exc:
         db.rollback()
         raise HTTPException(502, f"Photo storage upload failed: {exc}") from exc
@@ -181,12 +181,12 @@ def add_document(
             "content-type": file.content_type or "application/octet-stream",
             "upsert": "false",
         }
-        storage.from_(settings.storage_bucket).upload(
+        supabase.storage.from_(settings.storage_bucket).upload(
             storage_path,
             file_bytes,
             file_options=file_options,
         )
-        url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+        url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
     except Exception as exc:
         db.rollback()
         raise HTTPException(502, f"Document storage upload failed: {exc}") from exc
