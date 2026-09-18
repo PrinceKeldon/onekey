@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import Base, engine
+from app.database import Base, engine, ensure_schema_compatibility
 from app.routers import things
 
+ensure_schema_compatibility()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="ONEKEY API")
