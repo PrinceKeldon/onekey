@@ -42,15 +42,6 @@ class HistoryEventOut(BaseModel):
         from_attributes = True
 
 
-class DocumentOut(BaseModel):
-    label: str
-    url: str
-    uploaded_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
 class PhotoOut(BaseModel):
     url: str
     is_primary: bool
@@ -62,18 +53,11 @@ class PhotoOut(BaseModel):
 
 class DocumentOut(BaseModel):
     label: str
-    url: Optional[str] = None
-    body: Optional[str] = None
+    url: str
     uploaded_at: datetime
 
     class Config:
         from_attributes = True
-class TransferRequest(BaseModel):
-    # No current_owner_contact field anymore — who's transferring is now
-    # proven by the verified session (Authorization header), not a
-    # self-reported string. See get_authenticated_email in routers/things.py.
-    new_owner_contact: str
-    new_owner_display_name: str
 
 
 class ThingPublic(BaseModel):
@@ -82,8 +66,6 @@ class ThingPublic(BaseModel):
     status: str
     owner_display_name: str
     created_at: datetime
-    identity_type: str
-    identity_value: str
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
     photos: list[PhotoOut]
