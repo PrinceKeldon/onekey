@@ -76,6 +76,7 @@ class TransferConfirmOut(BaseModel):
     transfer_id: str
     status: str
     completed_at: Optional[datetime] = None
+    message: Optional[str] = None
 
 
 class ThingPublic(BaseModel):
