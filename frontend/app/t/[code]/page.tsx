@@ -137,7 +137,7 @@ function TransferOwnership({
     setSubmitting(true);
     setError(null);
     try {
-      await transferThing(code, accessToken, {
+      await transferThing(code, token, {
         new_owner_contact: newOwnerContact.trim(),
         new_owner_display_name: newOwnerName.trim(),
       });
