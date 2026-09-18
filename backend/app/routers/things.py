@@ -22,8 +22,8 @@ def hash_transfer_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def build_transfer_url(transfer_id: str, token: str) -> str:
-    return f"{settings.public_app_url.rstrip('/')}/transfer/confirm?transfer={transfer_id}&token={token}"
+def build_transfer_url(onekey_code: str, transfer_id: str, token: str) -> str:
+    return f"{settings.public_app_url.rstrip('/')}/t/{onekey_code}?transfer={transfer_id}&token={token}"
 
 
 
@@ -300,7 +300,7 @@ def request_transfer(
             thing_name=thing.name,
             onekey_code=thing.onekey_code,
             role="current",
-            confirmation_url=build_transfer_url(transfer.id, current_token),
+            confirmation_url=build_transfer_url(thing.onekey_code, transfer.id, current_token),
             expires_at=expires_at,
         )
         send_transfer_email(
@@ -309,7 +309,7 @@ def request_transfer(
             thing_name=thing.name,
             onekey_code=thing.onekey_code,
             role="new",
-            confirmation_url=build_transfer_url(transfer.id, new_token),
+            confirmation_url=build_transfer_url(thing.onekey_code, transfer.id, new_token),
             expires_at=expires_at,
         )
     except Exception as exc:
