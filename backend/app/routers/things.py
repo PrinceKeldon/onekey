@@ -1,6 +1,8 @@
 import uuid
 import mimetypes
-from datetime import datetime
+import hashlib
+import secrets
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Header
@@ -11,8 +13,18 @@ from app.database import get_db, settings, get_storage_client, get_auth_client
 from app import models, schemas
 from app.utils.idgen import generate_onekey_code, generate_qr_tag_value
 from app.utils.phash import compute_phash, hamming_distance
+from app.utils.email import send_transfer_email
 
 router = APIRouter(prefix="/things", tags=["things"])
+
+
+def hash_transfer_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def build_transfer_url(transfer_id: str, token: str) -> str:
+    return f"{settings.public_app_url.rstrip('/')}/transfer/confirm?transfer={transfer_id}&token={token}"
+
 
 
 
@@ -241,6 +253,7 @@ def request_transfer(
     payload: schemas.TransferRequest,
     db: Session = Depends(get_db),
 ):
+    """Create a two-party transfer and email a single-use confirmation link."""
     thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
     if not thing:
         raise HTTPException(404, "Thing not found")
@@ -255,57 +268,110 @@ def request_transfer(
         raise HTTPException(400, "This person already owns this ONEKEY.")
 
     new_owner = _get_or_create_user(db, new_contact, payload.new_owner_display_name.strip())
+    pending = db.query(models.OwnershipTransfer).filter(
+        models.OwnershipTransfer.thing_id == thing.id,
+        models.OwnershipTransfer.status == "pending",
+    ).first()
+    if pending:
+        raise HTTPException(409, "There is already a transfer awaiting confirmation for this ONEKEY.")
+
+    current_token = secrets.token_urlsafe(32)
+    new_token = secrets.token_urlsafe(32)
+    now = datetime.utcnow()
+    expires_at = now + timedelta(hours=settings.transfer_expiry_hours)
+
     transfer = models.OwnershipTransfer(
         thing_id=thing.id,
         current_owner_id=thing.owner_id,
         new_owner_id=new_owner.id,
+        current_owner_token_hash=hash_transfer_token(current_token),
+        new_owner_token_hash=hash_transfer_token(new_token),
+        expires_at=expires_at,
         status="pending",
     )
     db.add(transfer)
     db.commit()
     db.refresh(transfer)
+
+    try:
+        send_transfer_email(
+            recipient=current_contact,
+            recipient_name=thing.owner.display_name,
+            thing_name=thing.name,
+            onekey_code=thing.onekey_code,
+            role="current",
+            confirmation_url=build_transfer_url(transfer.id, current_token),
+            expires_at=expires_at,
+        )
+        send_transfer_email(
+            recipient=new_contact,
+            recipient_name=new_owner.display_name,
+            thing_name=thing.name,
+            onekey_code=thing.onekey_code,
+            role="new",
+            confirmation_url=build_transfer_url(transfer.id, new_token),
+            expires_at=expires_at,
+        )
+    except Exception as exc:
+        transfer.status = "cancelled"
+        db.commit()
+        raise HTTPException(
+            502,
+            "The transfer was created but ONEKEY could not send the confirmation emails. Please try again.",
+        ) from exc
+
     return schemas.TransferRequestOut(transfer_id=transfer.id, status=transfer.status)
 
 
 @router.post("/transfer/{transfer_id}/confirm", response_model=schemas.TransferConfirmOut)
 def confirm_transfer(
     transfer_id: str,
-    role: str,
-    authenticated_email: str = Depends(get_authenticated_email),
+    token: str,
     db: Session = Depends(get_db),
 ):
+    """Confirm ownership by possession of the single-use email token."""
     transfer = db.query(models.OwnershipTransfer).filter(
         models.OwnershipTransfer.id == transfer_id
     ).first()
     if not transfer:
         raise HTTPException(404, "Transfer request not found.")
+
+    now = datetime.utcnow()
+    if transfer.status == "pending" and transfer.expires_at <= now:
+        transfer.status = "expired"
+        db.commit()
+
     if transfer.status != "pending":
         return schemas.TransferConfirmOut(
             transfer_id=transfer.id,
             status=transfer.status,
             completed_at=transfer.completed_at,
+            message="This transfer link is no longer active.",
         )
 
-    current_owner = db.query(models.User).filter(models.User.id == transfer.current_owner_id).first()
-    new_owner = db.query(models.User).filter(models.User.id == transfer.new_owner_id).first()
-    thing = db.query(models.Thing).filter(models.Thing.id == transfer.thing_id).first()
-    if not current_owner or not new_owner or not thing:
-        raise HTTPException(500, "Transfer record is incomplete.")
-
-    now = datetime.utcnow()
-    if role == "current":
-        if authenticated_email != current_owner.contact.strip().lower():
-            raise HTTPException(403, "This confirmation link is for the current owner.")
-        transfer.current_owner_confirmed_at = transfer.current_owner_confirmed_at or now
-    elif role == "new":
-        if authenticated_email != new_owner.contact.strip().lower():
-            raise HTTPException(403, "This confirmation link is for the new owner.")
-        transfer.new_owner_confirmed_at = transfer.new_owner_confirmed_at or now
+    token_hash = hash_transfer_token(token)
+    if secrets.compare_digest(token_hash, transfer.current_owner_token_hash or ""):
+        role = "current"
+    elif secrets.compare_digest(token_hash, transfer.new_owner_token_hash or ""):
+        role = "new"
     else:
-        raise HTTPException(400, "Invalid transfer confirmation role.")
+        raise HTTPException(403, "This transfer confirmation link is invalid or has already been used.")
+
+    if role == "current":
+        if transfer.current_owner_confirmed_at is None:
+            transfer.current_owner_confirmed_at = now
+            transfer.current_owner_token_hash = None
+    else:
+        if transfer.new_owner_confirmed_at is None:
+            transfer.new_owner_confirmed_at = now
+            transfer.new_owner_token_hash = None
 
     if transfer.current_owner_confirmed_at and transfer.new_owner_confirmed_at:
-        # Ownership changes only after both independent email confirmations.
+        thing = db.query(models.Thing).filter(models.Thing.id == transfer.thing_id).first()
+        new_owner = db.query(models.User).filter(models.User.id == transfer.new_owner_id).first()
+        if not thing or not new_owner:
+            raise HTTPException(500, "Transfer record is incomplete.")
+
         previous_owner = thing.owner
         thing.owner_id = new_owner.id
         thing.status = "active"
@@ -314,16 +380,24 @@ def confirm_transfer(
         db.add(models.HistoryEvent(
             thing_id=thing.id,
             type="ownership_transferred",
-            actor_id=previous_owner.id,
-            detail=f"{previous_owner.display_name} → {new_owner.display_name}",
+            actor_id=previous_owner.id if previous_owner else None,
+            detail=f"Ownership transferred to {new_owner.display_name}",
             created_at=now,
         ))
+        db.commit()
+        return schemas.TransferConfirmOut(
+            transfer_id=transfer.id,
+            status="completed",
+            completed_at=now,
+            message="Ownership transfer confirmed. The ONEKEY record is now updated.",
+        )
 
     db.commit()
+    waiting_for = "new owner" if role == "current" else "current owner"
     return schemas.TransferConfirmOut(
         transfer_id=transfer.id,
-        status=transfer.status,
-        completed_at=transfer.completed_at,
+        status="pending",
+        message=f"Your confirmation is recorded. Waiting for the {waiting_for} to confirm.",
     )
 
 
