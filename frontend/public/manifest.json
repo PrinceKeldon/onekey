@@ -1,0 +1,10 @@
+{
+  "name": "ONEKEY",
+  "short_name": "ONEKEY",
+  "description": "Give anything a persistent digital memory.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0e0e10",
+  "theme_color": "#0e0e10",
+  "icons": []
+}
