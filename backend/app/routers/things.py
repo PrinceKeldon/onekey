@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
 import uuid
+import mimetypes
+from urllib.parse import urlparse
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -140,6 +142,32 @@ def claim_thing(
         identity_value=thing.identity_value,
         photo_warning=warning,
     )
+
+
+@router.get("/{onekey_code}/photo")
+def get_primary_photo(onekey_code: str, db: Session = Depends(get_db)):
+    thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
+    if not thing:
+        raise HTTPException(404, "Thing not found")
+
+    photo = next((p for p in thing.photos if p.is_primary), None) or (thing.photos[0] if thing.photos else None)
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+
+    parsed = urlparse(photo.url)
+    marker = "/storage/v1/object/public/" + settings.storage_bucket + "/"
+    if marker not in parsed.path:
+        raise HTTPException(404, "Photo storage path could not be resolved")
+    storage_path = parsed.path.split(marker, 1)[1]
+
+    try:
+        supabase = get_storage_client()
+        image_bytes = supabase.storage.from_(settings.storage_bucket).download(storage_path)
+    except Exception as exc:
+        raise HTTPException(502, f"Photo download failed: {exc}") from exc
+
+    media_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+    return Response(content=image_bytes, media_type=media_type)
 
 
 @router.get("/{onekey_code}", response_model=schemas.ThingPublic)
