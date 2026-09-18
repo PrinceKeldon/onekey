@@ -85,14 +85,23 @@ def claim_thing(
     image_bytes = photo.file.read()
     phash_value = compute_phash(image_bytes)
 
-    storage = get_storage_client()
-    storage_path = f"things/{uuid.uuid4()}_{photo.filename}"
-    storage.from_(settings.storage_bucket).upload(
-        storage_path,
-        image_bytes,
-        {"content-type": photo.content_type or "application/octet-stream"},
-    )
-    photo_url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
+    storage_path = f"things/{onekey_code}/photos/{uuid.uuid4()}_{photo.filename or 'upload'}"
+    try:
+        storage = get_storage_client()
+        file_options = {
+            "content-type": photo.content_type or "application/octet-stream",
+            "upsert": "false",
+        }
+        storage.from_(settings.storage_bucket).upload(
+            storage_path,
+            image_bytes,
+            file_options=file_options,
+        )
+        photo_url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(502, f"Photo storage upload failed: {exc}") from exc
 
     warning = None
     existing_photos = db.query(models.Photo).all()
@@ -106,8 +115,6 @@ def claim_thing(
 
     if best_distance is not None and best_distance <= settings.phash_warning_threshold and best_match_code:
         warning = schemas.PhotoWarning(similar_thing_code=best_match_code, distance=best_distance)
-
-    onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
 
     thing = models.Thing(
         onekey_code=onekey_code,
@@ -167,14 +174,22 @@ def add_document(
         raise HTTPException(404, "Thing not found")
 
     file_bytes = file.file.read()
-    storage = get_storage_client()
-    storage_path = f"things/{uuid.uuid4()}_{file.filename}"
-    storage.from_(settings.storage_bucket).upload(
-        storage_path,
-        file_bytes,
-        {"content-type": file.content_type or "application/octet-stream"},
-    )
-    url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
+    try:
+        storage = get_storage_client()
+        file_options = {
+            "content-type": file.content_type or "application/octet-stream",
+            "upsert": "false",
+        }
+        storage.from_(settings.storage_bucket).upload(
+            storage_path,
+            file_bytes,
+            file_options=file_options,
+        )
+        url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(502, f"Document storage upload failed: {exc}") from exc
 
     doc = models.Document(thing_id=thing.id, url=url, label=label)
     db.add(doc)
