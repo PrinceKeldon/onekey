@@ -6,13 +6,9 @@ import { DecodeHintType, BarcodeFormat } from "@zxing/library";
 import { checkIdentity, claimThing } from "../../lib/api";
 
 // Entry point for Path A: an object that already has its own serial/barcode
-// and has no physical ONEKEY tag yet. Unlike /t/[code], there's no existing
-// code to land on here — this page starts a claim from scratch and the
-// backend mints a fresh onekey_code on success.
+// and has no physical ONEKEY tag yet. The landing-page serial lookup can
+// arrive here with the identifier already populated.
 
-// Restrict to the 1D formats actually printed on retail goods. Narrowing the
-// format set (vs. scanning for everything ZXing supports) makes decodes
-// faster and cuts down on false-positive reads.
 const BARCODE_FORMATS = [
   BarcodeFormat.EAN_13,
   BarcodeFormat.EAN_8,
@@ -37,7 +33,6 @@ export default function ClaimBySerial() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
 
-  // --- barcode camera scan ---
   const videoRef = useRef<HTMLVideoElement>(null);
   const controlsRef = useRef<IScannerControls | null>(null);
   const readerRef = useRef<BrowserMultiFormatReader | null>(null);
@@ -45,17 +40,39 @@ export default function ClaimBySerial() {
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
 
-  async function checkValue(valueOverride?: string) {
-    const val = (valueOverride ?? identityValue).trim();
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const queryType = params.get("identity_type");
+    const queryValue = params.get("identity_value");
+
+    if (queryType === "barcode") setIdentityType("barcode");
+    if (queryType === "serial" || queryType === "barcode") {
+      setIdentityType(queryType);
+    }
+    if (queryValue) {
+      const normalized = queryValue.trim().toUpperCase();
+      setIdentityValue(normalized);
+      checkValue(normalized, queryType === "barcode" ? "barcode" : "serial");
+    }
+  }, []);
+
+  async function checkValue(
+    valueOverride?: string,
+    typeOverride?: "serial" | "barcode"
+  ) {
+    const val = (valueOverride ?? identityValue).trim().toUpperCase();
+    const type = typeOverride ?? identityType;
     if (!val) return;
-    const res = await checkIdentity(identityType, val);
+
+    const res = await checkIdentity(type, val);
+    setIdentityValue(val);
     setConflict(res.available ? null : res.existing_onekey_code || "another record");
     setChecked(true);
   }
 
   async function startBarcodeScan() {
     setScanError(null);
-    setIdentityType("barcode"); // only barcodes are optically scannable; serials are typed
+    setIdentityType("barcode");
     setChecked(false);
     setConflict(null);
 
@@ -65,9 +82,6 @@ export default function ClaimBySerial() {
     readerRef.current = reader;
 
     try {
-      // Acquire the stream ourselves rather than letting ZXing's
-      // decodeFromVideoDevice pick a device. This avoids black previews with
-      // virtual cameras that expose a device but produce no frames.
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
       });
@@ -84,10 +98,10 @@ export default function ClaimBySerial() {
           const text = result.getText();
           ctrl.stop();
           stopBarcodeScan();
-          setIdentityValue(text);
-          checkValue(text);
+          const normalized = text.trim().toUpperCase();
+          setIdentityValue(normalized);
+          checkValue(normalized, "barcode");
         }
-        // NotFoundException fires continuously while no barcode is in frame — expected, not an error to surface.
       });
       controlsRef.current = controls;
     } catch (err: any) {
@@ -108,7 +122,7 @@ export default function ClaimBySerial() {
     setScanning(false);
   }
 
-  useEffect(() => stopBarcodeScan, []); // cleanup camera on unmount
+  useEffect(() => stopBarcodeScan, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -122,7 +136,7 @@ export default function ClaimBySerial() {
       form.append("owner_contact", ownerContact);
       form.append("owner_display_name", ownerName);
       form.append("identity_type", identityType);
-      form.append("identity_value", identityValue.trim());
+      form.append("identity_value", identityValue.trim().toUpperCase());
       form.append("photo", photo);
       const res = await claimThing(form);
       setResult(res);
@@ -196,12 +210,15 @@ export default function ClaimBySerial() {
           {identityType === "serial" ? "Serial number" : "Barcode number"}
           <input
             value={identityValue}
-            onChange={(e) => { setIdentityValue(e.target.value); setChecked(false); }}
+            onChange={(e) => { setIdentityValue(e.target.value.toUpperCase()); setChecked(false); }}
             onBlur={() => checkValue()}
             required
             style={inputStyle}
           />
         </label>
+        <p style={{ opacity: 0.6, fontSize: "0.8rem", margin: 0 }}>
+          ONEKEY stores identifiers in uppercase. Enter the characters exactly as printed on the device.
+        </p>
 
         {checked && conflict && (
           <p style={{ color: "#f28b82" }}>
