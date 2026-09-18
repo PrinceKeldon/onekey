@@ -103,7 +103,14 @@ function TransferOwnership({
     e.preventDefault();
     setAuthBusy(true);
     setAuthError(null);
-    const { error: otpError } = await supabase.auth.signInWithOtp({ email: email.trim() });
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      email: email.trim(),
+      options: {
+        // Keep any passwordless redirect on the deployed ONEKEY origin,
+        // rather than falling back to Supabase's localhost Site URL.
+        emailRedirectTo: window.location.origin,
+      },
+    });
     setAuthBusy(false);
     if (otpError) {
       setAuthError(otpError.message);
