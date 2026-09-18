@@ -5,7 +5,7 @@ from supabase import create_client, Client
 
 
 class Settings(BaseSettings):
-    database_url: str = "postgresql://postgres:password@localhost:5432/postgres"
+    database_url: str
     supabase_url: str = ""
     supabase_service_role_key: str = ""
     storage_bucket: str = "onekey-media"
