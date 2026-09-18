@@ -70,6 +70,17 @@ def ensure_schema_compatibility():
               )
         """))
 
+        # Keep the history event vocabulary aligned with the ORM model.
+        conn.execute(text("""
+            ALTER TABLE history_events
+            DROP CONSTRAINT IF EXISTS ck_history_type
+        """))
+        conn.execute(text("""
+            ALTER TABLE history_events
+            ADD CONSTRAINT ck_history_type
+            CHECK (type IN ('created','claimed','document_added','photo_added','ownership_transferred','info_added'))
+        """))
+
         # Ownership transfers are two-party confirmations. Keep requests
         # separate from the Thing until both email identities have confirmed.
         conn.execute(text("""
