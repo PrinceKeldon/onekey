@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getThing, checkIdentity, claimThing, mediaUrl, transferThing } from "../../../lib/api";
+import { getThing, checkIdentity, claimThing, mediaUrl, requestTransfer, confirmTransfer } from "../../../lib/api";
 import { supabase } from "../../../lib/supabaseClient";
 
 type Thing = {
@@ -37,9 +37,58 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function KnownThing({ thing }: { thing: Thing }) {
   const primaryPhoto = thing.photos.find((p) => p.is_primary) || thing.photos[0];
+  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const transferId = params.get("transfer");
+    const role = params.get("role");
+    if (!transferId || (role !== "current" && role !== "new")) return;
+
+    let active = true;
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!active) return;
+      const token = data.session?.access_token;
+      if (!token) {
+        setConfirmationError("Please open the confirmation link from the email again.");
+        return;
+      }
+      try {
+        const result = await confirmTransfer(transferId, role, token);
+        if (!active) return;
+        if (result.status === "completed") {
+          setConfirmationMessage("Ownership transfer confirmed. The ONEKEY record is now updated.");
+        } else {
+          setConfirmationMessage(
+            role === "current"
+              ? "Your confirmation is recorded. The new owner still needs to confirm."
+              : "Your confirmation is recorded. The current owner still needs to confirm.",
+          );
+        }
+      } catch (err: any) {
+        if (active) setConfirmationError(err.message || "Transfer confirmation failed.");
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [thing.onekey_code]);
 
   return (
     <Centered>
+      {confirmationMessage && (
+        <p style={{ background: "#18351f", padding: "0.8rem", borderRadius: 8 }}>
+          {confirmationMessage}
+        </p>
+      )}
+      {confirmationError && (
+        <p style={{ background: "#3a2020", padding: "0.8rem", borderRadius: 8, color: "#f2b8b5" }}>
+          {confirmationError}
+        </p>
+      )}
+
       {primaryPhoto && (
         <img
           src={mediaUrl(primaryPhoto.url, thing.onekey_code)}
@@ -51,16 +100,55 @@ function KnownThing({ thing }: { thing: Thing }) {
       <p style={{ opacity: 0.6, marginTop: 4 }}>ONEKEY #{thing.onekey_code}</p>
 
       <Row label="Owner" value={thing.owner_display_name} />
-      <TransferOwnership code={thing.onekey_code} currentOwnerName={thing.owner_display_name} onTransferred={() => window.location.reload()} />
+      <Row
+        label={thing.identity_type === "serial" ? "Serial number" : thing.identity_type === "barcode" ? "Barcode" : "QR tag"}
+        value={thing.identity_value}
+      />
       <Row label="Status" value={thing.status} />
-      <Row label="Documents" value={`${thing.documents.length} document${thing.documents.length === 1 ? "" : "s"}`} />
+      <Row label="Created" value={formatDateTime(thing.created_at)} />
+
+      <TransferOwnership
+        code={thing.onekey_code}
+        currentOwnerName={thing.owner_display_name}
+        onTransferred={() => window.location.reload()}
+      />
+
+      <section style={{ marginTop: "2rem" }}>
+        <h3>Documents</h3>
+        {thing.documents.length === 0 ? (
+          <p style={{ opacity: 0.6 }}>No documents added yet.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {thing.documents.map((doc, i) => (
+              <div key={i} style={{ borderBottom: "1px solid #2a2a2e", paddingBottom: "0.6rem" }}>
+                {doc.url ? (
+                  <a
+                    href={doc.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: "#8ab4f8", textDecoration: "none" }}
+                  >
+                    {doc.label} ↗
+                  </a>
+                ) : (
+                  <strong>{doc.label}</strong>
+                )}
+                {doc.body && <p style={{ margin: "0.3rem 0 0", opacity: 0.8 }}>{doc.body}</p>}
+                <div style={{ fontSize: "0.78rem", opacity: 0.55, marginTop: "0.2rem" }}>
+                  Added {formatDateTime(doc.uploaded_at)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       <h3 style={{ marginTop: "2rem" }}>History</h3>
       <ul style={{ paddingLeft: "1.2rem", opacity: 0.85 }}>
         {thing.history.map((h, i) => (
-          <li key={i}>
-            {h.type.replace("_", " ")}
-            {h.detail ? ` — ${h.detail}` : ""} · {new Date(h.created_at).toLocaleDateString()}
+          <li key={i} style={{ marginBottom: "0.55rem" }}>
+            {h.type.replace(/_/g, " ")}
+            {h.detail ? ` — ${h.detail}` : ""} · {formatDateTime(h.created_at)}
           </li>
         ))}
       </ul>
@@ -78,90 +166,46 @@ function TransferOwnership({
   onTransferred: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [authStage, setAuthStage] = useState<"idle" | "code_sent">("idle");
-  const [email, setEmail] = useState("");
-  const [otpCode, setOtpCode] = useState("");
-  const [accessToken, setAccessToken] = useState<string | null>(null);
-  const [signedInEmail, setSignedInEmail] = useState<string | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authBusy, setAuthBusy] = useState(false);
+  const [currentOwnerContact, setCurrentOwnerContact] = useState("");
   const [newOwnerName, setNewOwnerName] = useState("");
   const [newOwnerContact, setNewOwnerContact] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      if (data.session) {
-        setAccessToken(data.session.access_token);
-        setSignedInEmail(data.session.user.email ?? null);
-      }
-    });
-  }, []);
-
-  async function sendCode(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthBusy(true);
-    setAuthError(null);
-    const { error: otpError } = await supabase.auth.signInWithOtp({
-      email: email.trim(),
-      options: {
-        // Keep any passwordless redirect on the deployed ONEKEY origin,
-        // rather than falling back to Supabase's localhost Site URL.
-        emailRedirectTo: window.location.origin,
-      },
-    });
-    setAuthBusy(false);
-    if (otpError) {
-      setAuthError(otpError.message);
-      return;
-    }
-    setAuthStage("code_sent");
-  }
-
-  async function verifyCode(e: React.FormEvent) {
-    e.preventDefault();
-    setAuthBusy(true);
-    setAuthError(null);
-    const { data, error: verifyError } = await supabase.auth.verifyOtp({
-      email: email.trim(),
-      token: otpCode.trim(),
-      type: "email",
-    });
-    setAuthBusy(false);
-    if (verifyError || !data.session) {
-      setAuthError(verifyError?.message || "That code didn't work. Check your email and try again.");
-      return;
-    }
-    setAccessToken(data.session.access_token);
-    setSignedInEmail(data.session.user.email ?? null);
-    setAuthStage("idle");
-    setOtpCode("");
-    setAuthError(null);
-  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-
-    const { data: sessionData } = await supabase.auth.getSession();
-    const token = sessionData.session?.access_token || accessToken;
-    if (!token) {
-      setError("Your sign-in session is missing. Please verify the email code again.");
-      setAccessToken(null);
-      return;
-    }
-
     setSubmitting(true);
     setError(null);
+
     try {
-      await transferThing(code, token, {
+      const result = await requestTransfer(code, {
+        current_owner_contact: currentOwnerContact.trim(),
         new_owner_contact: newOwnerContact.trim(),
         new_owner_display_name: newOwnerName.trim(),
       });
-      setOpen(false);
-      onTransferred();
+
+      const origin = window.location.origin;
+      const currentRedirect = `${origin}/t/${code}?transfer=${encodeURIComponent(result.transfer_id)}&role=current`;
+      const newRedirect = `${origin}/t/${code}?transfer=${encodeURIComponent(result.transfer_id)}&role=new`;
+
+      const [currentEmailResult, newEmailResult] = await Promise.all([
+        supabase.auth.signInWithOtp({
+          email: currentOwnerContact.trim(),
+          options: { emailRedirectTo: currentRedirect },
+        }),
+        supabase.auth.signInWithOtp({
+          email: newOwnerContact.trim(),
+          options: { emailRedirectTo: newRedirect },
+        }),
+      ]);
+
+      if (currentEmailResult.error) throw currentEmailResult.error;
+      if (newEmailResult.error) throw newEmailResult.error;
+
+      setSent(true);
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || "Could not start the transfer.");
     } finally {
       setSubmitting(false);
     }
@@ -175,65 +219,65 @@ function TransferOwnership({
     );
   }
 
-  if (!accessToken) {
+  if (sent) {
     return (
-      <div style={{ marginTop: "1rem" }}>
-        <p style={{ opacity: 0.6, fontSize: "0.85rem", margin: 0 }}>
-          Only {currentOwnerName} can transfer this. Sign in with the email registered to this ONEKEY to confirm it's you.
+      <div style={{ marginTop: "1rem", padding: "0.9rem", border: "1px solid #2a2a2e", borderRadius: 10 }}>
+        <strong>Transfer request sent.</strong>
+        <p style={{ opacity: 0.7, fontSize: "0.9rem", marginBottom: 0 }}>
+          A confirmation email has been sent to {currentOwnerContact} and another to {newOwnerContact}.
+          Ownership will change only after both people confirm through their email.
         </p>
-        {authStage === "idle" && (
-          <form onSubmit={sendCode} style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
-            <label>
-              Your email
-              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required style={inputStyle} />
-            </label>
-            {authError && <p style={{ color: "#f28b82" }}>{authError}</p>}
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <button type="submit" disabled={authBusy} style={btnStyle}>{authBusy ? "Sending…" : "Send sign-in code"}</button>
-              <button type="button" onClick={() => setOpen(false)} style={secondaryBtn}>Cancel</button>
-            </div>
-          </form>
-        )}
-        {authStage === "code_sent" && (
-          <form onSubmit={verifyCode} style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.75rem" }}>
-            <p style={{ opacity: 0.6, fontSize: "0.85rem", margin: 0 }}>
-              Sent a 6-digit code to {email}. Enter it below.
-            </p>
-            <label>
-              Code
-              <input value={otpCode} onChange={(e) => setOtpCode(e.target.value)} inputMode="numeric" required style={inputStyle} />
-            </label>
-            {authError && <p style={{ color: "#f28b82" }}>{authError}</p>}
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <button type="submit" disabled={authBusy} style={btnStyle}>{authBusy ? "Verifying…" : "Verify & continue"}</button>
-              <button type="button" onClick={() => setOpen(false)} style={secondaryBtn}>Cancel</button>
-            </div>
-          </form>
-        )}
       </div>
     );
   }
 
   return (
-    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "1rem" }}>
-      <p style={{ opacity: 0.6, fontSize: "0.85rem", margin: 0 }}>
-        Signed in as {signedInEmail}. Who is this going to?
+    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "1rem" }}>
+      <p style={{ opacity: 0.65, fontSize: "0.85rem", margin: 0 }}>
+        This transfer requires confirmation from both the current owner and the new owner.
       </p>
+      <label>
+        Current owner's email
+        <input
+          type="email"
+          value={currentOwnerContact}
+          onChange={(e) => setCurrentOwnerContact(e.target.value)}
+          required
+          style={inputStyle}
+        />
+      </label>
       <label>
         New owner's name
         <input value={newOwnerName} onChange={(e) => setNewOwnerName(e.target.value)} required style={inputStyle} />
       </label>
       <label>
-        New owner's email or phone
-        <input value={newOwnerContact} onChange={(e) => setNewOwnerContact(e.target.value)} required style={inputStyle} />
+        New owner's email
+        <input
+          type="email"
+          value={newOwnerContact}
+          onChange={(e) => setNewOwnerContact(e.target.value)}
+          required
+          style={inputStyle}
+        />
       </label>
       {error && <p style={{ color: "#f28b82" }}>{error}</p>}
       <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button type="submit" disabled={submitting} style={btnStyle}>{submitting ? "Transferring…" : "Confirm transfer"}</button>
-        <button type="button" onClick={() => setOpen(false)} style={secondaryBtn}>Cancel</button>
+        <button type="submit" disabled={submitting} style={btnStyle}>
+          {submitting ? "Sending confirmations…" : "Start transfer"}
+        </button>
+        <button type="button" onClick={() => setOpen(false)} style={secondaryBtn}>
+          Cancel
+        </button>
       </div>
     </form>
   );
+}
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function Row({ label, value }: { label: string; value: string }) {
