@@ -35,22 +35,45 @@ export async function getThing(code: string) {
 }
 
 
-export async function transferThing(
+export async function requestTransfer(
   code: string,
-  accessToken: string,
-  payload: { new_owner_contact: string; new_owner_display_name: string },
+  payload: {
+    current_owner_contact: string;
+    new_owner_contact: string;
+    new_owner_display_name: string;
+  },
 ) {
-  const res = await fetch(`${API_URL}/things/${code}/transfer`, {
+  const res = await fetch(`${API_URL}/things/${code}/transfer/request`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail || "transfer failed");
+    throw new Error(body.detail || "transfer request failed");
   }
-  return res.json();
+  return res.json() as Promise<{ transfer_id: string; status: string }>;
+}
+
+export async function confirmTransfer(
+  transferId: string,
+  role: "current" | "new",
+  accessToken: string,
+) {
+  const res = await fetch(
+    `${API_URL}/things/transfer/${transferId}/confirm?role=${role}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "transfer confirmation failed");
+  }
+  return res.json() as Promise<{
+    transfer_id: string;
+    status: string;
+    completed_at?: string;
+  }>;
 }
