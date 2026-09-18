@@ -1,18 +1,15 @@
-import os
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.database import get_db, settings
+from app.database import get_db, settings, get_storage_client
 from app import models, schemas
 from app.utils.idgen import generate_onekey_code, generate_qr_tag_value
 from app.utils.phash import compute_phash, hamming_distance
 
 router = APIRouter(prefix="/things", tags=["things"])
-
-os.makedirs(settings.local_media_dir, exist_ok=True)
 
 
 def _get_or_create_user(db: Session, contact: str, display_name: str) -> models.User:
@@ -25,11 +22,14 @@ def _get_or_create_user(db: Session, contact: str, display_name: str) -> models.
     return user
 
 
+def _normalize_identity(identity_type: str, identity_value: str | None) -> str | None:
+    if identity_type in ("serial", "barcode") and identity_value:
+        return identity_value.strip().upper()
+    return identity_value
+
+
 @router.get("/generate-tag")
 def generate_tag(db: Session = Depends(get_db)):
-    """Mint a fresh, guaranteed-unclaimed code for printing a new physical
-    QR label ahead of time (batch printing use case). The code isn't bound
-    to anything until someone actually claims it via /claim with tag_code set."""
     for _ in range(10):
         code = generate_onekey_code()
         if not db.query(models.Thing).filter(models.Thing.onekey_code == code).first():
@@ -39,17 +39,20 @@ def generate_tag(db: Session = Depends(get_db)):
 
 @router.post("/check-identity", response_model=schemas.IdentityCheckResponse)
 def check_identity(payload: schemas.IdentityCheckRequest, db: Session = Depends(get_db)):
-    """Path A pre-check: does this serial/barcode already have a ONEKEY record?
-    Called before showing the claim form, so a user trying to claim an
-    already-registered item is redirected to the existing record instead of
-    hitting a raw DB error."""
+    identity_value = _normalize_identity(payload.identity_type, payload.identity_value)
     existing = (
         db.query(models.Thing)
-        .filter(models.Thing.identity_value == payload.identity_value)
+        .filter(
+            models.Thing.identity_type == payload.identity_type,
+            models.Thing.identity_value == identity_value,
+        )
         .first()
     )
     if existing:
-        return schemas.IdentityCheckResponse(available=False, existing_onekey_code=existing.onekey_code)
+        return schemas.IdentityCheckResponse(
+            available=False,
+            existing_onekey_code=existing.onekey_code,
+        )
     return schemas.IdentityCheckResponse(available=True)
 
 
@@ -60,36 +63,36 @@ def claim_thing(
     owner_display_name: str = Form(...),
     identity_type: str = Form(...),
     identity_value: str = Form(None),
-    tag_code: str = Form(None),  # set when claiming a pre-printed, already-scanned QR (e.g. from /t/{code})
+    tag_code: str = Form(None),
     photo: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     if identity_type not in ("serial", "barcode", "qr_tag"):
         raise HTTPException(400, "invalid identity_type")
 
+    identity_value = _normalize_identity(identity_type, identity_value)
+
     if identity_type in ("serial", "barcode") and not identity_value:
         raise HTTPException(400, "identity_value is required for serial/barcode claims")
 
     if identity_type == "qr_tag":
-        # The physical sticker's own printed code is the only identity anchor
-        # this path has, so it doubles as both the public onekey_code and the
-        # unique identity_value — reusing it (not minting a second string) is
-        # what makes "swap the sticker" detectable rather than invisible.
         final_identity_value = tag_code or generate_qr_tag_value()
     else:
         final_identity_value = identity_value
 
     owner = _get_or_create_user(db, owner_contact, owner_display_name)
 
-    # --- Photo: save + perceptual hash + similarity check (soft warning only) ---
     image_bytes = photo.file.read()
     phash_value = compute_phash(image_bytes)
 
-    filename = f"{uuid.uuid4()}_{photo.filename}"
-    filepath = os.path.join(settings.local_media_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(image_bytes)
-    photo_url = f"/media/{filename}"
+    storage = get_storage_client()
+    storage_path = f"things/{uuid.uuid4()}_{photo.filename}"
+    storage.from_(settings.storage_bucket).upload(
+        storage_path,
+        image_bytes,
+        {"content-type": photo.content_type or "application/octet-stream"},
+    )
+    photo_url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
 
     warning = None
     existing_photos = db.query(models.Photo).all()
@@ -104,9 +107,6 @@ def claim_thing(
     if best_distance is not None and best_distance <= settings.phash_warning_threshold and best_match_code:
         warning = schemas.PhotoWarning(similar_thing_code=best_match_code, distance=best_distance)
 
-    # --- Create the Thing. identity_value's DB-level UNIQUE constraint is the
-    # actual fraud-prevention mechanism: if two claims race on the same
-    # serial, one of them fails here, not silently later. ---
     onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
 
     thing = models.Thing(
@@ -125,7 +125,6 @@ def claim_thing(
 
     db.add(models.Photo(thing_id=thing.id, url=photo_url, is_primary=True, phash=phash_value))
     db.add(models.HistoryEvent(thing_id=thing.id, type="created", actor_id=owner.id))
-
     db.commit()
 
     return schemas.ClaimResponse(
@@ -148,6 +147,8 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
         status=thing.status,
         owner_display_name=thing.owner.display_name,
         created_at=thing.created_at,
+        identity_type=thing.identity_type,
+        identity_value=thing.identity_value,
         history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
         documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
         photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
@@ -166,11 +167,14 @@ def add_document(
         raise HTTPException(404, "Thing not found")
 
     file_bytes = file.file.read()
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    filepath = os.path.join(settings.local_media_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(file_bytes)
-    url = f"/media/{filename}"
+    storage = get_storage_client()
+    storage_path = f"things/{uuid.uuid4()}_{file.filename}"
+    storage.from_(settings.storage_bucket).upload(
+        storage_path,
+        file_bytes,
+        {"content-type": file.content_type or "application/octet-stream"},
+    )
+    url = storage.from_(settings.storage_bucket).get_public_url(storage_path)
 
     doc = models.Document(thing_id=thing.id, url=url, label=label)
     db.add(doc)
