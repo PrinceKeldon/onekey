@@ -55,17 +55,10 @@ export async function requestTransfer(
   return res.json() as Promise<{ transfer_id: string; status: string }>;
 }
 
-export async function confirmTransfer(
-  transferId: string,
-  role: "current" | "new",
-  accessToken: string,
-) {
+export async function confirmTransfer(transferId: string, token: string) {
   const res = await fetch(
-    `${API_URL}/things/transfer/${transferId}/confirm?role=${role}`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${accessToken}` },
-    },
+    `${API_URL}/things/transfer/${transferId}/confirm?token=${encodeURIComponent(token)}`,
+    { method: "POST" },
   );
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -75,5 +68,6 @@ export async function confirmTransfer(
     transfer_id: string;
     status: string;
     completed_at?: string;
+    message?: string;
   }>;
 }
