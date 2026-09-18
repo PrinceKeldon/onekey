@@ -10,7 +10,7 @@ class IdentityCheckRequest(BaseModel):
 
 class IdentityCheckResponse(BaseModel):
     available: bool
-    existing_onekey_code: Optional[str] = None  # set if already claimed, so caller can link to it
+    existing_onekey_code: Optional[str] = None
 
 
 class ClaimRequest(BaseModel):
@@ -18,7 +18,7 @@ class ClaimRequest(BaseModel):
     owner_contact: str
     owner_display_name: str
     identity_type: Literal["serial", "barcode", "qr_tag"]
-    identity_value: Optional[str] = None  # required for serial/barcode; auto-generated for qr_tag
+    identity_value: Optional[str] = None
 
 
 class PhotoWarning(BaseModel):
@@ -66,6 +66,8 @@ class ThingPublic(BaseModel):
     status: str
     owner_display_name: str
     created_at: datetime
+    identity_type: str
+    identity_value: str
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
     photos: list[PhotoOut]
