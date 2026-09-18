@@ -1,22 +1,20 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
-from app.database import Base, engine, settings
+from app.database import Base, engine
 from app.routers import things
 
-Base.metadata.create_all(bind=engine)  # convenience for local dev; use supabase_schema.sql for real deploys
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="ONEKEY API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten before shipping past MVP
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.mount("/media", StaticFiles(directory=settings.local_media_dir), name="media")
 app.include_router(things.router)
 
 
