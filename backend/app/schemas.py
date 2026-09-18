@@ -66,6 +66,8 @@ class ThingPublic(BaseModel):
     status: str
     owner_display_name: str
     created_at: datetime
+    identity_type: str
+    identity_value: str
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
     photos: list[PhotoOut]
