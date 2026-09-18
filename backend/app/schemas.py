@@ -53,7 +53,8 @@ class PhotoOut(BaseModel):
 
 class DocumentOut(BaseModel):
     label: str
-    url: str
+    url: Optional[str] = None
+    body: Optional[str] = None
     uploaded_at: datetime
 
     class Config:
@@ -61,9 +62,20 @@ class DocumentOut(BaseModel):
 
 
 class TransferRequest(BaseModel):
-    # The current owner is proven by the verified Supabase session.
+    current_owner_contact: str
     new_owner_contact: str
     new_owner_display_name: str
+
+
+class TransferRequestOut(BaseModel):
+    transfer_id: str
+    status: str
+
+
+class TransferConfirmOut(BaseModel):
+    transfer_id: str
+    status: str
+    completed_at: Optional[datetime] = None
 
 
 class ThingPublic(BaseModel):
@@ -71,6 +83,8 @@ class ThingPublic(BaseModel):
     name: str
     status: str
     owner_display_name: str
+    identity_type: str
+    identity_value: str
     created_at: datetime
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
