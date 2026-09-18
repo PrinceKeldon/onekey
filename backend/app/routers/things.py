@@ -1,5 +1,6 @@
 import uuid
 import mimetypes
+from datetime import datetime
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response, Header
@@ -154,6 +155,12 @@ def claim_thing(
 
     db.add(models.Photo(thing_id=thing.id, url=photo_url, is_primary=True, phash=phash_value))
     db.add(models.HistoryEvent(thing_id=thing.id, type="created", actor_id=owner.id))
+    db.add(models.HistoryEvent(
+        thing_id=thing.id,
+        type="photo_added",
+        actor_id=owner.id,
+        detail="Primary reference photo added",
+    ))
 
     db.commit()
 
@@ -212,52 +219,95 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
 
 
 
-@router.post("/{onekey_code}/transfer", response_model=schemas.ThingPublic)
-def transfer_thing(
+@router.post("/{onekey_code}/transfer/request", response_model=schemas.TransferRequestOut)
+def request_transfer(
     onekey_code: str,
     payload: schemas.TransferRequest,
-    authenticated_email: str = Depends(get_authenticated_email),
     db: Session = Depends(get_db),
 ):
     thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
     if not thing:
         raise HTTPException(404, "Thing not found")
 
-    # The caller must be signed in as the email currently registered to this ONEKEY.
-    owner_contact = thing.owner.contact.strip().lower()
-    if owner_contact != authenticated_email:
-        raise HTTPException(
-            403,
-            "Only the current owner can transfer this record.",
-        )
-
+    current_contact = payload.current_owner_contact.strip().lower()
     new_contact = payload.new_owner_contact.strip().lower()
-    if not new_contact:
-        raise HTTPException(400, "New owner contact is required.")
-    if new_contact == owner_contact:
+    if not current_contact or not new_contact:
+        raise HTTPException(400, "Both owner email addresses are required.")
+    if current_contact != thing.owner.contact.strip().lower():
+        raise HTTPException(403, "That email does not match the current owner.")
+    if new_contact == current_contact:
         raise HTTPException(400, "This person already owns this ONEKEY.")
 
     new_owner = _get_or_create_user(db, new_contact, payload.new_owner_display_name.strip())
-    previous_owner = thing.owner
-    thing.owner_id = new_owner.id
-
-    db.add(models.HistoryEvent(
+    transfer = models.OwnershipTransfer(
         thing_id=thing.id,
-        type="ownership_transferred",
-        actor_id=previous_owner.id,
-        detail=f"{previous_owner.display_name} → {new_owner.display_name}",
-    ))
+        current_owner_id=thing.owner_id,
+        new_owner_id=new_owner.id,
+        status="pending",
+    )
+    db.add(transfer)
     db.commit()
-    db.refresh(thing)
-    return schemas.ThingPublic(
-        onekey_code=thing.onekey_code,
-        name=thing.name,
-        status=thing.status,
-        owner_display_name=thing.owner.display_name,
-        created_at=thing.created_at,
-        history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
-        documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
-        photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
+    db.refresh(transfer)
+    return schemas.TransferRequestOut(transfer_id=transfer.id, status=transfer.status)
+
+
+@router.post("/transfer/{transfer_id}/confirm", response_model=schemas.TransferConfirmOut)
+def confirm_transfer(
+    transfer_id: str,
+    role: str,
+    authenticated_email: str = Depends(get_authenticated_email),
+    db: Session = Depends(get_db),
+):
+    transfer = db.query(models.OwnershipTransfer).filter(
+        models.OwnershipTransfer.id == transfer_id
+    ).first()
+    if not transfer:
+        raise HTTPException(404, "Transfer request not found.")
+    if transfer.status != "pending":
+        return schemas.TransferConfirmOut(
+            transfer_id=transfer.id,
+            status=transfer.status,
+            completed_at=transfer.completed_at,
+        )
+
+    current_owner = db.query(models.User).filter(models.User.id == transfer.current_owner_id).first()
+    new_owner = db.query(models.User).filter(models.User.id == transfer.new_owner_id).first()
+    thing = db.query(models.Thing).filter(models.Thing.id == transfer.thing_id).first()
+    if not current_owner or not new_owner or not thing:
+        raise HTTPException(500, "Transfer record is incomplete.")
+
+    now = datetime.utcnow()
+    if role == "current":
+        if authenticated_email != current_owner.contact.strip().lower():
+            raise HTTPException(403, "This confirmation link is for the current owner.")
+        transfer.current_owner_confirmed_at = transfer.current_owner_confirmed_at or now
+    elif role == "new":
+        if authenticated_email != new_owner.contact.strip().lower():
+            raise HTTPException(403, "This confirmation link is for the new owner.")
+        transfer.new_owner_confirmed_at = transfer.new_owner_confirmed_at or now
+    else:
+        raise HTTPException(400, "Invalid transfer confirmation role.")
+
+    if transfer.current_owner_confirmed_at and transfer.new_owner_confirmed_at:
+        # Ownership changes only after both independent email confirmations.
+        previous_owner = thing.owner
+        thing.owner_id = new_owner.id
+        thing.status = "active"
+        transfer.status = "completed"
+        transfer.completed_at = now
+        db.add(models.HistoryEvent(
+            thing_id=thing.id,
+            type="ownership_transferred",
+            actor_id=previous_owner.id,
+            detail=f"{previous_owner.display_name} → {new_owner.display_name}",
+            created_at=now,
+        ))
+
+    db.commit()
+    return schemas.TransferConfirmOut(
+        transfer_id=transfer.id,
+        status=transfer.status,
+        completed_at=transfer.completed_at,
     )
 
 
@@ -291,7 +341,13 @@ def add_document(
 
     doc = models.Document(thing_id=thing.id, url=url, label=label)
     db.add(doc)
-    db.add(models.HistoryEvent(thing_id=thing.id, type="document_added", detail=label))
+    db.flush()
+    db.add(models.HistoryEvent(
+        thing_id=thing.id,
+        type="document_added",
+        detail=label,
+        created_at=doc.uploaded_at,
+    ))
     db.commit()
     db.refresh(doc)
     return doc
