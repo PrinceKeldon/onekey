@@ -123,7 +123,7 @@ export default function Home() {
 
       {scanning && (
         <div style={{ position: "relative", marginTop: "1rem" }}>
-          <video ref={videoRef} style={{ width: "100%", borderRadius: 12 }} muted playsInline />
+          <video ref={videoRef} style={{ width: "100%", borderRadius: 12 }} muted autoPlay playsInline />
           <canvas ref={canvasRef} style={{ display: "none" }} />
           <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: 8 }}>
             Point your camera at the ONEKEY QR code…

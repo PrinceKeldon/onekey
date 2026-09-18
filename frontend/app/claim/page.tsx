@@ -82,15 +82,16 @@ export default function ClaimBySerial() {
     readerRef.current = reader;
 
     try {
+      // Attach the stream via decodeFromStream ONLY — not manually first.
+      // Attaching the same stream twice (once by hand, once inside
+      // decodeFromStream) is a race that can leave the <video> element
+      // rendering black with nothing thrown, even though the stream itself
+      // is live. Confirmed regression: this exact bug was already fixed
+      // once before and came back in a later merge — don't reintroduce it.
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
       });
       streamRef.current = stream;
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
       setScanning(true);
 
       const controls = await reader.decodeFromStream(stream, videoRef.current!, (result, err, ctrl) => {
@@ -101,6 +102,13 @@ export default function ClaimBySerial() {
           const normalized = text.trim().toUpperCase();
           setIdentityValue(normalized);
           checkValue(normalized, "barcode");
+          return;
+        }
+        // ZXing fires NotFoundException continuously while no barcode is in
+        // frame — expected noise. Anything else gets surfaced so a black
+        // screen has a visible cause instead of failing silently.
+        if (err && err.name !== "NotFoundException") {
+          setScanError(`Scanner error: ${err.name} — ${err.message || "no detail"}`);
         }
       });
       controlsRef.current = controls;
@@ -193,7 +201,7 @@ export default function ClaimBySerial() {
 
       {scanning && (
         <div style={{ marginBottom: "1rem" }}>
-          <video ref={videoRef} style={{ width: "100%", borderRadius: 12 }} muted playsInline />
+          <video ref={videoRef} style={{ width: "100%", borderRadius: 12 }} muted autoPlay playsInline />
           <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: 8 }}>
             Hold the barcode steady in frame…
           </p>
