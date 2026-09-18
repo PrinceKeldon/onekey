@@ -243,3 +243,47 @@ def add_document(
     db.commit()
     db.refresh(doc)
     return doc
+
+
+@router.post("/{onekey_code}/transfer", response_model=schemas.TransferResponse)
+def transfer_ownership(
+    onekey_code: str,
+    current_owner_contact: str = Form(...),
+    new_owner_contact: str = Form(...),
+    new_owner_display_name: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
+    if not thing:
+        raise HTTPException(404, "Thing not found")
+
+    # Proof-of-ownership: same contact-matching pattern as add_document.
+    # This is the ONLY thing standing between "I own this" and "I typed a
+    # code" — get it wrong and the whole model is just an honor system.
+    if _normalize_contact(current_owner_contact) != thing.owner.contact:
+        raise HTTPException(403, "Only the current owner can transfer this record.")
+
+    normalized_new_contact = _normalize_contact(new_owner_contact)
+    if normalized_new_contact == thing.owner.contact:
+        raise HTTPException(400, "This contact already owns the record.")
+
+    previous_owner = thing.owner
+    new_owner = _get_or_create_user(db, new_owner_contact, new_owner_display_name)
+
+    thing.owner_id = new_owner.id
+    # status is deliberately left as-is (see comment on the Thing model docs
+    # / product notes) — ownership is derived from history, not a status
+    # flag, so "transferred" as a persistent status isn't set here.
+    db.add(models.HistoryEvent(
+        thing_id=thing.id,
+        type="ownership_transferred",
+        actor_id=previous_owner.id,
+        detail=f"{previous_owner.display_name} -> {new_owner.display_name}",
+    ))
+    db.commit()
+
+    return schemas.TransferResponse(
+        onekey_code=thing.onekey_code,
+        previous_owner_display_name=previous_owner.display_name,
+        new_owner_display_name=new_owner.display_name,
+    )

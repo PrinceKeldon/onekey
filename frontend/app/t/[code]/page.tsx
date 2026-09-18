@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getThing, checkIdentity, claimThing, mediaUrl } from "../../../lib/api";
+import { getThing, checkIdentity, claimThing, addDocument, transferOwnership, mediaUrl } from "../../../lib/api";
 
 type Thing = {
   onekey_code: string;
@@ -21,14 +21,16 @@ export default function ThingPage({ params }: { params: { code: string } }) {
   const [loading, setLoading] = useState(true);
   const [thing, setThing] = useState<Thing | null>(null);
 
+  function load() {
+    return getThing(code).then(setThing);
+  }
+
   useEffect(() => {
-    getThing(code)
-      .then(setThing)
-      .finally(() => setLoading(false));
+    load().finally(() => setLoading(false));
   }, [code]);
 
   if (loading) return <Centered>Loading…</Centered>;
-  if (thing) return <KnownThing thing={thing} />;
+  if (thing) return <KnownThing thing={thing} code={code} onUpdated={load} />;
   return <UnclaimedThing code={code} />;
 }
 
@@ -36,7 +38,7 @@ function Centered({ children }: { children: React.ReactNode }) {
   return <main style={{ maxWidth: 480, margin: "0 auto", padding: "3rem 1.5rem" }}>{children}</main>;
 }
 
-function KnownThing({ thing }: { thing: Thing }) {
+function KnownThing({ thing, code, onUpdated }: { thing: Thing; code: string; onUpdated: () => Promise<void> }) {
   const primaryPhoto = thing.photos.find((p) => p.is_primary) || thing.photos[0];
   const identityLabel = thing.identity_type === "qr_tag"
     ? "ONEKEY tag"
@@ -70,6 +72,27 @@ function KnownThing({ thing }: { thing: Thing }) {
           </li>
         ))}
       </ul>
+
+      {thing.documents.length > 0 && (
+        <>
+          <h3 style={{ marginTop: "1.5rem" }}>Documents</h3>
+          <ul style={{ paddingLeft: "1.2rem", opacity: 0.85 }}>
+            {thing.documents.map((d, i) => (
+              <li key={i}>
+                <a href={mediaUrl(d.url)} target="_blank" rel="noreferrer" style={{ color: "#8ab4f8" }}>
+                  {d.label}
+                </a>{" "}
+                · {new Date(d.uploaded_at).toLocaleDateString()}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      <div style={{ display: "flex", gap: "0.75rem", marginTop: "2rem", flexWrap: "wrap" }}>
+        <AddDocumentPanel code={code} onUpdated={onUpdated} />
+        <TransferOwnershipPanel code={code} onUpdated={onUpdated} />
+      </div>
     </Centered>
   );
 }
@@ -80,6 +103,165 @@ function Row({ label, value }: { label: string; value: string }) {
       <span style={{ opacity: 0.6 }}>{label}</span>
       <span>{value}</span>
     </div>
+  );
+}
+
+function AddDocumentPanel({ code, onUpdated }: { code: string; onUpdated: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [label, setLabel] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [ownerContact, setOwnerContact] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!file) return setError("Choose a file.");
+    setSubmitting(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("label", label);
+      form.append("owner_contact", ownerContact);
+      form.append("file", file);
+      await addDocument(code, form);
+      await onUpdated();
+      setLabel("");
+      setFile(null);
+      setOwnerContact("");
+      setOpen(false);
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={btnStyle}>
+        + Add document
+      </button>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} style={panelStyle}>
+      <strong>Add document</strong>
+      <label>
+        Label
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Receipt, warranty, repair invoice…"
+          required
+          style={inputStyle}
+        />
+      </label>
+      <label>
+        File
+        <input type="file" onChange={(e) => setFile(e.target.files?.[0] || null)} required style={inputStyle} />
+      </label>
+      <label>
+        Your email or phone (proves you're the owner)
+        <input value={ownerContact} onChange={(e) => setOwnerContact(e.target.value)} required style={inputStyle} />
+      </label>
+
+      {error && <p style={{ color: "#f28b82", margin: 0 }}>{error}</p>}
+
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="submit" disabled={submitting} style={btnStyle}>
+          {submitting ? "Adding…" : "Add"}
+        </button>
+        <button type="button" onClick={() => { setOpen(false); setError(null); }} style={secondaryBtnStyle}>
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function TransferOwnershipPanel({ code, onUpdated }: { code: string; onUpdated: () => Promise<void> }) {
+  const [open, setOpen] = useState(false);
+  const [currentOwnerContact, setCurrentOwnerContact] = useState("");
+  const [newOwnerContact, setNewOwnerContact] = useState("");
+  const [newOwnerName, setNewOwnerName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("current_owner_contact", currentOwnerContact);
+      form.append("new_owner_contact", newOwnerContact);
+      form.append("new_owner_display_name", newOwnerName);
+      const res = await transferOwnership(code, form);
+      await onUpdated();
+      setDone(res.new_owner_display_name);
+      setCurrentOwnerContact("");
+      setNewOwnerContact("");
+      setNewOwnerName("");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button onClick={() => { setOpen(true); setDone(null); }} style={secondaryBtnStyle}>
+        Transfer ownership
+      </button>
+    );
+  }
+
+  if (done) {
+    return (
+      <div style={panelStyle}>
+        <strong>Transferred.</strong>
+        <p style={{ opacity: 0.7, margin: 0 }}>Now owned by {done}.</p>
+        <button type="button" onClick={() => setOpen(false)} style={secondaryBtnStyle}>
+          Close
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} style={panelStyle}>
+      <strong>Transfer ownership</strong>
+      <p style={{ opacity: 0.6, fontSize: "0.85rem", margin: 0 }}>
+        Both sides required — this can't be undone from here.
+      </p>
+      <label>
+        Your email or phone (current owner)
+        <input value={currentOwnerContact} onChange={(e) => setCurrentOwnerContact(e.target.value)} required style={inputStyle} />
+      </label>
+      <label>
+        New owner's name
+        <input value={newOwnerName} onChange={(e) => setNewOwnerName(e.target.value)} required style={inputStyle} />
+      </label>
+      <label>
+        New owner's email or phone
+        <input value={newOwnerContact} onChange={(e) => setNewOwnerContact(e.target.value)} required style={inputStyle} />
+      </label>
+
+      {error && <p style={{ color: "#f28b82", margin: 0 }}>{error}</p>}
+
+      <div style={{ display: "flex", gap: "0.5rem" }}>
+        <button type="submit" disabled={submitting} style={btnStyle}>
+          {submitting ? "Transferring…" : "Transfer"}
+        </button>
+        <button type="button" onClick={() => { setOpen(false); setError(null); }} style={secondaryBtnStyle}>
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 
@@ -230,4 +412,25 @@ const btnStyle: React.CSSProperties = {
   background: "#1a1a1d",
   color: "#f2f2f2",
   cursor: "pointer",
+};
+
+const secondaryBtnStyle: React.CSSProperties = {
+  padding: "0.6rem 1rem",
+  borderRadius: 8,
+  border: "1px solid #2a2a2e",
+  background: "transparent",
+  color: "#f2f2f2",
+  opacity: 0.75,
+  cursor: "pointer",
+};
+
+const panelStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.6rem",
+  width: "100%",
+  padding: "1rem",
+  borderRadius: 10,
+  border: "1px solid #2a2a2e",
+  background: "#141416",
 };

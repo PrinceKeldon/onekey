@@ -32,3 +32,21 @@ export async function getThing(code: string) {
   if (!res.ok) throw new Error("failed to load thing");
   return res.json();
 }
+
+export async function addDocument(code: string, form: FormData) {
+  const res = await fetch(`${API_URL}/things/${code}/documents`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "add document failed");
+  }
+  return res.json();
+}
+
+export async function transferOwnership(code: string, form: FormData) {
+  const res = await fetch(`${API_URL}/things/${code}/transfer`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || "transfer failed");
+  }
+  return res.json();
+}

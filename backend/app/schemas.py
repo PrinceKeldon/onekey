@@ -74,3 +74,9 @@ class ThingPublic(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class TransferResponse(BaseModel):
+    onekey_code: str
+    previous_owner_display_name: str
+    new_owner_display_name: str
