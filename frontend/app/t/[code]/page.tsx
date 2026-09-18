@@ -41,7 +41,7 @@ function KnownThing({ thing }: { thing: Thing }) {
     <Centered>
       {primaryPhoto && (
         <img
-          src={mediaUrl(primaryPhoto.url)}
+          src={mediaUrl('/things/' + thing.onekey_code + '/photo')}
           alt={thing.name}
           style={{ width: "100%", borderRadius: 12, marginBottom: "1rem", objectFit: "cover", maxHeight: 320 }}
         />
