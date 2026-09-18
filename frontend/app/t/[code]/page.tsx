@@ -9,6 +9,8 @@ type Thing = {
   status: string;
   owner_display_name: string;
   created_at: string;
+  identity_type: string;
+  identity_value: string;
   history: { type: string; detail?: string; created_at: string }[];
   documents: { label: string; url: string; uploaded_at: string }[];
   photos: { url: string; is_primary: boolean; created_at: string }[];
@@ -36,6 +38,11 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 function KnownThing({ thing }: { thing: Thing }) {
   const primaryPhoto = thing.photos.find((p) => p.is_primary) || thing.photos[0];
+  const identityLabel = thing.identity_type === "qr_tag"
+    ? "ONEKEY tag"
+    : thing.identity_type === "barcode"
+      ? "Barcode"
+      : "Serial number";
 
   return (
     <Centered>
@@ -49,6 +56,7 @@ function KnownThing({ thing }: { thing: Thing }) {
       <h1 style={{ marginBottom: 0 }}>{thing.name}</h1>
       <p style={{ opacity: 0.6, marginTop: 4 }}>ONEKEY #{thing.onekey_code}</p>
 
+      <Row label={identityLabel} value={thing.identity_value} />
       <Row label="Owner" value={thing.owner_display_name} />
       <Row label="Status" value={thing.status} />
       <Row label="Documents" value={`${thing.documents.length} document${thing.documents.length === 1 ? "" : "s"}`} />
@@ -88,8 +96,10 @@ function UnclaimedThing({ code }: { code: string }) {
   const [error, setError] = useState<string | null>(null);
 
   async function checkSerial() {
-    if (!identityValue) return;
-    const res = await checkIdentity("serial", identityValue);
+    const normalized = identityValue.trim().toUpperCase();
+    if (!normalized) return;
+    setIdentityValue(normalized);
+    const res = await checkIdentity("serial", normalized);
     setIdentityConflict(res.available ? null : res.existing_onekey_code || "another record");
   }
 
@@ -106,7 +116,7 @@ function UnclaimedThing({ code }: { code: string }) {
       form.append("photo", photo);
       if (hasSerial) {
         form.append("identity_type", "serial");
-        form.append("identity_value", identityValue);
+        form.append("identity_value", identityValue.trim().toUpperCase());
       } else {
         form.append("identity_type", "qr_tag");
         form.append("tag_code", code); // bind identity to the physical tag that was scanned
@@ -156,12 +166,15 @@ function UnclaimedThing({ code }: { code: string }) {
                 Serial / barcode
                 <input
                   value={identityValue}
-                  onChange={(e) => setIdentityValue(e.target.value)}
+                  onChange={(e) => setIdentityValue(e.target.value.toUpperCase())}
                   onBlur={checkSerial}
                   required
                   style={inputStyle}
                 />
               </label>
+              <p style={{ opacity: 0.6, fontSize: "0.8rem", margin: 0 }}>
+                ONEKEY stores identifiers in uppercase. Enter the characters exactly as printed on the device.
+              </p>
               {identityConflict && (
                 <p style={{ color: "#f28b82" }}>
                   Already claimed as ONEKEY #{identityConflict}.{" "}

@@ -14,7 +14,16 @@ from app.utils.phash import compute_phash, hamming_distance
 router = APIRouter(prefix="/things", tags=["things"])
 
 
+def _normalize_contact(contact: str) -> str:
+    """Contact is the proof-of-ownership anchor (documents, transfer). Case
+    and incidental whitespace must never make the same person look like two
+    different owners, or a legitimate owner could fail their own ownership
+    check."""
+    return contact.strip().lower()
+
+
 def _get_or_create_user(db: Session, contact: str, display_name: str) -> models.User:
+    contact = _normalize_contact(contact)
     user = db.query(models.User).filter(models.User.contact == contact).first()
     if user:
         return user
@@ -194,12 +203,19 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
 def add_document(
     onekey_code: str,
     label: str = Form(...),
+    owner_contact: str = Form(...),
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
     thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
     if not thing:
         raise HTTPException(404, "Thing not found")
+
+    # Proof-of-ownership check: only the current owner can add a document to
+    # this record. Same contact-matching pattern as the rest of the model —
+    # no separate auth system, the contact given at claim time IS the key.
+    if _normalize_contact(owner_contact) != thing.owner.contact:
+        raise HTTPException(403, "Only the current owner can add documents to this record.")
 
     file_bytes = file.file.read()
     storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
@@ -221,7 +237,9 @@ def add_document(
 
     doc = models.Document(thing_id=thing.id, url=url, label=label)
     db.add(doc)
-    db.add(models.HistoryEvent(thing_id=thing.id, type="document_added", detail=label))
+    db.add(models.HistoryEvent(
+        thing_id=thing.id, type="document_added", actor_id=thing.owner_id, detail=label
+    ))
     db.commit()
     db.refresh(doc)
     return doc

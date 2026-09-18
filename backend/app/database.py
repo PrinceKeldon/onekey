@@ -62,6 +62,23 @@ def ensure_schema_compatibility():
             ON things(identity_value)
         """))
 
+        # Contact is now the proof-of-ownership key for document uploads
+        # (and will be for transfer). Normalize existing rows to
+        # trim+lowercase so an owner whose contact was stored with different
+        # casing before this change doesn't get locked out of their own
+        # records. Collisions (two rows differing only by case/whitespace)
+        # are left as-is rather than silently merged — that needs a human
+        # to confirm they're really the same person.
+        conn.execute(text("""
+            UPDATE users
+            SET contact = lower(trim(contact))
+            WHERE contact <> lower(trim(contact))
+              AND lower(trim(contact)) NOT IN (
+                  SELECT lower(trim(contact)) FROM users AS u2
+                  WHERE u2.id <> users.id
+              )
+        """))
+
 
 
 def get_db():
