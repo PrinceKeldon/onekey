@@ -81,6 +81,30 @@ class Document(Base):
     thing = relationship("Thing", back_populates="documents")
 
 
+class OwnershipTransfer(Base):
+    __tablename__ = "ownership_transfers"
+    __table_args__ = (
+        CheckConstraint(
+            "status in ('pending','completed','cancelled','expired')",
+            name="ck_transfer_status",
+        ),
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    thing_id = Column(UUID(as_uuid=False), ForeignKey("things.id", ondelete="CASCADE"), nullable=False)
+    current_owner_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    new_owner_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    current_owner_confirmed_at = Column(DateTime, nullable=True)
+    new_owner_confirmed_at = Column(DateTime, nullable=True)
+    status = Column(String, nullable=False, default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+
+    thing = relationship("Thing")
+    current_owner = relationship("User", foreign_keys=[current_owner_id])
+    new_owner = relationship("User", foreign_keys=[new_owner_id])
+
+
 class HistoryEvent(Base):
     __tablename__ = "history_events"
     __table_args__ = (
