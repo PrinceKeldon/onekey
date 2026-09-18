@@ -129,11 +129,22 @@ function TransferOwnership({
     }
     setAccessToken(data.session.access_token);
     setSignedInEmail(data.session.user.email ?? null);
+    setAuthStage("idle");
+    setOtpCode("");
+    setAuthError(null);
   }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!accessToken) return;
+
+    const { data: sessionData } = await supabase.auth.getSession();
+    const token = sessionData.session?.access_token || accessToken;
+    if (!token) {
+      setError("Your sign-in session is missing. Please verify the email code again.");
+      setAccessToken(null);
+      return;
+    }
+
     setSubmitting(true);
     setError(null);
     try {
