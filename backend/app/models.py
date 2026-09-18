@@ -109,7 +109,7 @@ class HistoryEvent(Base):
     __tablename__ = "history_events"
     __table_args__ = (
         CheckConstraint(
-            "type in ('created','claimed','document_added','photo_added','ownership_transferred')",
+            "type in ('created','claimed','document_added','photo_added','ownership_transferred','info_added')",
             name="ck_history_type",
         ),
     )
