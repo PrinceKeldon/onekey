@@ -1,6 +1,10 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://onekey-api-25cg.onrender.com";
 
-export function mediaUrl(path: string) {
+export function mediaUrl(path: string, onekeyCode?: string) {
+  // Current records use Supabase Storage URLs. Keep those URLs intact.
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  // Legacy/backend-relative photo paths are served through the API proxy.
+  if (onekeyCode && path.startsWith("/media/")) return `${API_URL}/things/${onekeyCode}/photo`;
   return `${API_URL}${path}`;
 }
 
