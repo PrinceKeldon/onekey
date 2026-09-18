@@ -214,6 +214,8 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
         name=thing.name,
         status=thing.status,
         owner_display_name=thing.owner.display_name,
+        identity_type=thing.identity_type,
+        identity_value=thing.identity_value,
         created_at=thing.created_at,
         history=[
             schemas.HistoryEventOut.model_validate(h)
