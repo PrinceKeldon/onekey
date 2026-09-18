@@ -43,7 +43,9 @@ def generate_tag(db: Session = Depends(get_db)):
 
 @router.post("/check-identity", response_model=schemas.IdentityCheckResponse)
 def check_identity(payload: schemas.IdentityCheckRequest, db: Session = Depends(get_db)):
-    existing = db.query(models.Thing).filter(models.Thing.identity_value == payload.identity_value).first()
+    # ONEKEY treats device serials/barcodes as uppercase identifiers.
+    identity_value = payload.identity_value.strip().upper()
+    existing = db.query(models.Thing).filter(models.Thing.identity_value == identity_value).first()
     if existing:
         return schemas.IdentityCheckResponse(available=False, existing_onekey_code=existing.onekey_code)
     return schemas.IdentityCheckResponse(available=True)
@@ -65,7 +67,11 @@ def claim_thing(
     if identity_type in ("serial", "barcode") and not identity_value:
         raise HTTPException(400, "identity_value is required for serial/barcode claims")
 
-    final_identity_value = tag_code or generate_qr_tag_value() if identity_type == "qr_tag" else identity_value
+    if identity_type in ("serial", "barcode"):
+        final_identity_value = identity_value.strip().upper()
+    else:
+        final_identity_value = tag_code or generate_qr_tag_value()
+
     owner = _get_or_create_user(db, owner_contact, owner_display_name)
 
     image_bytes = photo.file.read()
@@ -129,6 +135,8 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
         status=thing.status,
         owner_display_name=thing.owner.display_name,
         created_at=thing.created_at,
+        identity_type=thing.identity_type,
+        identity_value=thing.identity_value,
         history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
         documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
         photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
