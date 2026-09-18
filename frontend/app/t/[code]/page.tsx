@@ -176,6 +176,7 @@ function TransferOwnership({
       });
 
       if (!result.transfer_id) throw new Error("Could not create transfer request.");
+      setSent(true);
     } catch (err: any) {
       setError(err.message || "Could not start the transfer.");
     } finally {
