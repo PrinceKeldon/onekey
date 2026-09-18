@@ -42,19 +42,19 @@ class HistoryEventOut(BaseModel):
         from_attributes = True
 
 
-class DocumentOut(BaseModel):
-    label: str
+class PhotoOut(BaseModel):
     url: str
-    uploaded_at: datetime
+    is_primary: bool
+    created_at: datetime
 
     class Config:
         from_attributes = True
 
 
-class PhotoOut(BaseModel):
+class DocumentOut(BaseModel):
+    label: str
     url: str
-    is_primary: bool
-    created_at: datetime
+    uploaded_at: datetime
 
     class Config:
         from_attributes = True
@@ -66,8 +66,6 @@ class ThingPublic(BaseModel):
     status: str
     owner_display_name: str
     created_at: datetime
-    identity_type: str
-    identity_value: str
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
     photos: list[PhotoOut]
