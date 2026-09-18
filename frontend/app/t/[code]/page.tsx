@@ -9,9 +9,11 @@ type Thing = {
   name: string;
   status: string;
   owner_display_name: string;
+  identity_type: "serial" | "barcode" | "qr_tag";
+  identity_value: string;
   created_at: string;
   history: { type: string; detail?: string; created_at: string }[];
-  documents: { label: string; url: string; uploaded_at: string }[];
+  documents: { label: string; url?: string | null; body?: string | null; uploaded_at: string }[];
   photos: { url: string; is_primary: boolean; created_at: string }[];
 };
 
