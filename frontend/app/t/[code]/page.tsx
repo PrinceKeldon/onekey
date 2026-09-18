@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getThing, checkIdentity, claimThing } from "../../../lib/api";
+import { getThing, checkIdentity, claimThing, mediaUrl } from "../../../lib/api";
 
 type Thing = {
   onekey_code: string;
@@ -11,6 +11,7 @@ type Thing = {
   created_at: string;
   history: { type: string; detail?: string; created_at: string }[];
   documents: { label: string; url: string; uploaded_at: string }[];
+  photos: { url: string; is_primary: boolean; created_at: string }[];
 };
 
 export default function ThingPage({ params }: { params: { code: string } }) {
@@ -34,8 +35,17 @@ function Centered({ children }: { children: React.ReactNode }) {
 }
 
 function KnownThing({ thing }: { thing: Thing }) {
+  const primaryPhoto = thing.photos.find((p) => p.is_primary) || thing.photos[0];
+
   return (
     <Centered>
+      {primaryPhoto && (
+        <img
+          src={mediaUrl(primaryPhoto.url)}
+          alt={thing.name}
+          style={{ width: "100%", borderRadius: 12, marginBottom: "1rem", objectFit: "cover", maxHeight: 320 }}
+        />
+      )}
       <h1 style={{ marginBottom: 0 }}>{thing.name}</h1>
       <p style={{ opacity: 0.6, marginTop: 4 }}>ONEKEY #{thing.onekey_code}</p>
 

@@ -151,6 +151,7 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
         created_at=thing.created_at,
         history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
         documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
+        photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
     )
 
 

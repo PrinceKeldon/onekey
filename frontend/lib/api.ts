@@ -1,5 +1,9 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+export function mediaUrl(path: string) {
+  return `${API_URL}${path}`;
+}
+
 export async function checkIdentity(identity_type: "serial" | "barcode", identity_value: string) {
   const res = await fetch(`${API_URL}/things/check-identity`, {
     method: "POST",

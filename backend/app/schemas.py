@@ -51,6 +51,15 @@ class DocumentOut(BaseModel):
         from_attributes = True
 
 
+class PhotoOut(BaseModel):
+    url: str
+    is_primary: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class ThingPublic(BaseModel):
     onekey_code: str
     name: str
@@ -59,6 +68,7 @@ class ThingPublic(BaseModel):
     created_at: datetime
     history: list[HistoryEventOut]
     documents: list[DocumentOut]
+    photos: list[PhotoOut]
 
     class Config:
         from_attributes = True
