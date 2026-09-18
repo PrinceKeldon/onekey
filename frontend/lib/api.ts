@@ -7,10 +7,11 @@ export function mediaUrl(path: string) {
 }
 
 export async function checkIdentity(identity_type: "serial" | "barcode", identity_value: string) {
+  const normalizedValue = identity_value.trim().toUpperCase();
   const res = await fetch(`${API_URL}/things/check-identity`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ identity_type, identity_value }),
+    body: JSON.stringify({ identity_type, identity_value: normalizedValue }),
   });
   if (!res.ok) throw new Error("check-identity failed");
   return res.json() as Promise<{ available: boolean; existing_onekey_code?: string }>;
