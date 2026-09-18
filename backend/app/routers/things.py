@@ -176,7 +176,7 @@ def add_document(
     file_bytes = file.file.read()
     storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
     try:
-        storage = get_storage_client()
+        supabase = get_storage_client()
         file_options = {
             "content-type": file.content_type or "application/octet-stream",
             "upsert": "false",
