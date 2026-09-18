@@ -70,6 +70,24 @@ def ensure_schema_compatibility():
               )
         """))
 
+        # Ownership transfers are two-party confirmations. Keep requests
+        # separate from the Thing until both email identities have confirmed.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ownership_transfers (
+                id uuid PRIMARY KEY,
+                thing_id uuid NOT NULL REFERENCES things(id) ON DELETE CASCADE,
+                current_owner_id uuid NOT NULL REFERENCES users(id),
+                new_owner_id uuid NOT NULL REFERENCES users(id),
+                current_owner_confirmed_at timestamp NULL,
+                new_owner_confirmed_at timestamp NULL,
+                status text NOT NULL DEFAULT 'pending',
+                created_at timestamp NOT NULL DEFAULT now(),
+                completed_at timestamp NULL,
+                CONSTRAINT ck_transfer_status
+                    CHECK (status IN ('pending','completed','cancelled','expired'))
+            )
+        """))
+
         # Documents can now be a written note instead of / in addition to a
         # file. Older databases have url NOT NULL from before this change —
         # relax that and add the "must have something" check constraint.
