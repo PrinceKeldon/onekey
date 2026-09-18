@@ -154,7 +154,12 @@ def claim_thing(
         raise HTTPException(409, "This identity value is already claimed by another ONEKEY record.")
 
     db.add(models.Photo(thing_id=thing.id, url=photo_url, is_primary=True, phash=phash_value))
-    db.add(models.HistoryEvent(thing_id=thing.id, type="created", actor_id=owner.id))
+    db.add(models.HistoryEvent(
+        thing_id=thing.id,
+        type="claimed",
+        actor_id=owner.id,
+        detail="ONEKEY record claimed by owner",
+    ))
     db.add(models.HistoryEvent(
         thing_id=thing.id,
         type="photo_added",
@@ -210,9 +215,18 @@ def get_thing(onekey_code: str, db: Session = Depends(get_db)):
         status=thing.status,
         owner_display_name=thing.owner.display_name,
         created_at=thing.created_at,
-        history=[schemas.HistoryEventOut.model_validate(h) for h in thing.history],
-        documents=[schemas.DocumentOut.model_validate(d) for d in thing.documents],
-        photos=[schemas.PhotoOut.model_validate(p) for p in thing.photos],
+        history=[
+            schemas.HistoryEventOut.model_validate(h)
+            for h in sorted(thing.history, key=lambda item: item.created_at or datetime.min)
+        ],
+        documents=[
+            schemas.DocumentOut.model_validate(d)
+            for d in sorted(thing.documents, key=lambda item: item.uploaded_at or datetime.min)
+        ],
+        photos=[
+            schemas.PhotoOut.model_validate(p)
+            for p in sorted(thing.photos, key=lambda item: item.created_at or datetime.min)
+        ],
     )
 
 
