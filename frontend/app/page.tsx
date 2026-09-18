@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import jsQR from "jsqr";
+import { checkIdentity } from "../lib/api";
 
-// Pulls a ONEKEY code out of whatever a QR actually encodes — either a full
-// URL (https://onekey.app/t/8F42K) or just the bare code, depending on how
-// the label was printed.
+// The landing page accepts a serial number for lookup. ONEKEY QR codes
+// continue to open their existing /t/[code] record directly.
 function extractCode(raw: string): string {
   try {
     const url = new URL(raw);
@@ -28,7 +28,9 @@ export default function Home() {
 
   const [scanning, setScanning] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [manualCode, setManualCode] = useState("");
+  const [serial, setSerial] = useState("");
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookingUp, setLookingUp] = useState(false);
 
   async function startScan() {
     setCameraError(null);
@@ -46,8 +48,8 @@ export default function Home() {
     } catch (err: any) {
       setCameraError(
         err?.name === "NotAllowedError"
-          ? "Camera permission denied. You can still enter a code manually below."
-          : "Couldn't access the camera. You can still enter a code manually below."
+          ? "Camera permission denied. You can still enter the serial number manually below."
+          : "Couldn't access the camera. You can still enter the serial number manually below."
       );
     }
   }
@@ -83,12 +85,29 @@ export default function Home() {
     rafRef.current = requestAnimationFrame(tick);
   }
 
-  useEffect(() => stopScan, []); // cleanup camera on unmount
+  useEffect(() => stopScan, []);
 
-  function submitManualCode(e: React.FormEvent) {
+  async function submitSerial(e: React.FormEvent) {
     e.preventDefault();
-    if (!manualCode.trim()) return;
-    router.push(`/t/${manualCode.trim().toUpperCase()}`);
+    const normalized = serial.trim().toUpperCase();
+    if (!normalized) return;
+
+    setLookingUp(true);
+    setLookupError(null);
+    try {
+      const res = await checkIdentity("serial", normalized);
+      if (res.available) {
+        router.push(`/claim?identity_type=serial&identity_value=${encodeURIComponent(normalized)}`);
+      } else if (res.existing_onekey_code) {
+        router.push(`/t/${res.existing_onekey_code}`);
+      } else {
+        setLookupError("This serial is already claimed, but its ONEKEY record could not be located.");
+      }
+    } catch {
+      setLookupError("We couldn't check that serial right now. Please try again.");
+    } finally {
+      setLookingUp(false);
+    }
   }
 
   return (
@@ -106,7 +125,9 @@ export default function Home() {
         <div style={{ position: "relative", marginTop: "1rem" }}>
           <video ref={videoRef} style={{ width: "100%", borderRadius: 12 }} muted playsInline />
           <canvas ref={canvasRef} style={{ display: "none" }} />
-          <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: 8 }}>Point your camera at the ONEKEY QR code…</p>
+          <p style={{ opacity: 0.6, fontSize: "0.85rem", marginTop: 8 }}>
+            Point your camera at the ONEKEY QR code…
+          </p>
           <button onClick={stopScan} style={{ ...secondaryBtn, marginTop: 8 }}>
             Cancel
           </button>
@@ -117,15 +138,24 @@ export default function Home() {
 
       <div style={{ marginTop: "2.5rem", opacity: 0.6, fontSize: "0.85rem" }}>— or —</div>
 
-      <form onSubmit={submitManualCode} style={{ display: "flex", gap: "0.5rem", marginTop: "1rem" }}>
-        <input
-          value={manualCode}
-          onChange={(e) => setManualCode(e.target.value)}
-          placeholder="Enter code, e.g. 8F42K"
-          style={inputStyle}
-        />
-        <button type="submit" style={secondaryBtn}>
-          Go
+      <form onSubmit={submitSerial} style={{ display: "flex", flexDirection: "column", gap: "0.6rem", marginTop: "1rem" }}>
+        <label style={{ textAlign: "left" }}>
+          Serial number
+          <input
+            value={serial}
+            onChange={(e) => setSerial(e.target.value.toUpperCase())}
+            placeholder="Enter serial number"
+            autoCapitalize="characters"
+            spellCheck={false}
+            style={inputStyle}
+          />
+        </label>
+        <p style={{ textAlign: "left", opacity: 0.6, fontSize: "0.8rem", margin: 0 }}>
+          ONEKEY stores serial numbers in uppercase. Enter the characters exactly as printed on the device.
+        </p>
+        {lookupError && <p style={{ color: "#f28b82", margin: 0 }}>{lookupError}</p>}
+        <button type="submit" disabled={lookingUp} style={secondaryBtn}>
+          {lookingUp ? "Checking…" : "Find / Register"}
         </button>
       </form>
     </main>
@@ -153,7 +183,8 @@ const secondaryBtn: React.CSSProperties = {
 };
 
 const inputStyle: React.CSSProperties = {
-  flex: 1,
+  width: "100%",
+  boxSizing: "border-box",
   padding: "0.6rem",
   borderRadius: 8,
   border: "1px solid #3a3a3e",
