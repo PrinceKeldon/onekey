@@ -1,18 +1,18 @@
-import os
 import uuid
+import mimetypes
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 
-from app.database import get_db, settings
+from app.database import get_db, settings, get_storage_client
 from app import models, schemas
 from app.utils.idgen import generate_onekey_code, generate_qr_tag_value
 from app.utils.phash import compute_phash, hamming_distance
 
 router = APIRouter(prefix="/things", tags=["things"])
 
-os.makedirs(settings.local_media_dir, exist_ok=True)
 
 
 def _get_or_create_user(db: Session, contact: str, display_name: str) -> models.User:
@@ -85,11 +85,22 @@ def claim_thing(
     image_bytes = photo.file.read()
     phash_value = compute_phash(image_bytes)
 
-    filename = f"{uuid.uuid4()}_{photo.filename}"
-    filepath = os.path.join(settings.local_media_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(image_bytes)
-    photo_url = f"/media/{filename}"
+    onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
+    storage_path = f"things/{onekey_code}/photos/{uuid.uuid4()}_{photo.filename or 'upload'}"
+    try:
+        supabase = get_storage_client()
+        supabase.storage.from_(settings.storage_bucket).upload(
+            storage_path,
+            image_bytes,
+            file_options={
+                "content-type": photo.content_type or "application/octet-stream",
+                "upsert": "false",
+            },
+        )
+        photo_url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(502, f"Photo storage upload failed: {exc}") from exc
 
     warning = None
     existing_photos = db.query(models.Photo).all()
@@ -107,8 +118,6 @@ def claim_thing(
     # --- Create the Thing. identity_value's DB-level UNIQUE constraint is the
     # actual fraud-prevention mechanism: if two claims race on the same
     # serial, one of them fails here, not silently later. ---
-    onekey_code = tag_code if (identity_type == "qr_tag" and tag_code) else generate_onekey_code()
-
     thing = models.Thing(
         onekey_code=onekey_code,
         name=name,
@@ -134,6 +143,32 @@ def claim_thing(
         identity_value=thing.identity_value,
         photo_warning=warning,
     )
+
+
+@router.get("/{onekey_code}/photo")
+def get_primary_photo(onekey_code: str, db: Session = Depends(get_db)):
+    thing = db.query(models.Thing).filter(models.Thing.onekey_code == onekey_code).first()
+    if not thing:
+        raise HTTPException(404, "Thing not found")
+
+    photo = next((p for p in thing.photos if p.is_primary), None) or (thing.photos[0] if thing.photos else None)
+    if not photo:
+        raise HTTPException(404, "Photo not found")
+
+    parsed = urlparse(photo.url)
+    marker = "/storage/v1/object/public/" + settings.storage_bucket + "/"
+    if marker not in parsed.path:
+        raise HTTPException(404, "Photo storage path could not be resolved")
+    storage_path = parsed.path.split(marker, 1)[1]
+
+    try:
+        supabase = get_storage_client()
+        image_bytes = supabase.storage.from_(settings.storage_bucket).download(storage_path)
+    except Exception as exc:
+        raise HTTPException(502, f"Photo download failed: {exc}") from exc
+
+    media_type = mimetypes.guess_type(storage_path)[0] or "application/octet-stream"
+    return Response(content=image_bytes, media_type=media_type)
 
 
 @router.get("/{onekey_code}", response_model=schemas.ThingPublic)
@@ -166,11 +201,21 @@ def add_document(
         raise HTTPException(404, "Thing not found")
 
     file_bytes = file.file.read()
-    filename = f"{uuid.uuid4()}_{file.filename}"
-    filepath = os.path.join(settings.local_media_dir, filename)
-    with open(filepath, "wb") as f:
-        f.write(file_bytes)
-    url = f"/media/{filename}"
+    storage_path = f"things/{onekey_code}/documents/{uuid.uuid4()}_{file.filename or 'upload'}"
+    try:
+        supabase = get_storage_client()
+        supabase.storage.from_(settings.storage_bucket).upload(
+            storage_path,
+            file_bytes,
+            file_options={
+                "content-type": file.content_type or "application/octet-stream",
+                "upsert": "false",
+            },
+        )
+        url = supabase.storage.from_(settings.storage_bucket).get_public_url(storage_path)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(502, f"Document storage upload failed: {exc}") from exc
 
     doc = models.Document(thing_id=thing.id, url=url, label=label)
     db.add(doc)
