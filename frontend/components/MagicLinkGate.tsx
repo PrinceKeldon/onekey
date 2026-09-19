@@ -21,7 +21,7 @@ export default function MagicLinkGate({ onReady }: { onReady: (email: string) =>
       if (sessionEmail) onReady(sessionEmail);
     });
     return () => { mounted = false; listener.subscription.unsubscribe(); };
-  }, [onReady]);
+  }, []);
 
   async function sendLink(e: React.FormEvent) {
     e.preventDefault();
