@@ -1,3 +1,5 @@
+import { supabase } from "./supabaseClient";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://onekey-api-25cg.onrender.com";
 
 export function mediaUrl(path: string, onekeyCode?: string) {
@@ -19,7 +21,14 @@ export async function checkIdentity(identity_type: "serial" | "barcode", identit
 }
 
 export async function claimThing(form: FormData) {
-  const res = await fetch(`${API_URL}/things/claim`, { method: "POST", body: form });
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Please sign in with your ONEKEY magic link first.");
+  const res = await fetch(`${API_URL}/things/claim`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || "claim failed");

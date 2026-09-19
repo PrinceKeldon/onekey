@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { BrowserMultiFormatReader, type IScannerControls } from "@zxing/browser";
 import { DecodeHintType, BarcodeFormat } from "@zxing/library";
 import { checkIdentity, claimThing } from "../../lib/api";
+import MagicLinkGate from "../../components/MagicLinkGate";
 
 // Entry point for Path A: an object that already has its own serial/barcode
 // and has no physical ONEKEY tag yet. The landing-page serial lookup can
@@ -27,7 +28,7 @@ export default function ClaimBySerial() {
 
   const [name, setName] = useState("");
   const [ownerName, setOwnerName] = useState("");
-  const [ownerContact, setOwnerContact] = useState("");
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
   const [photo, setPhoto] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +142,6 @@ export default function ClaimBySerial() {
     try {
       const form = new FormData();
       form.append("name", name);
-      form.append("owner_contact", ownerContact);
       form.append("owner_display_name", ownerName);
       form.append("identity_type", identityType);
       form.append("identity_value", identityValue.trim().toUpperCase());
@@ -154,6 +154,8 @@ export default function ClaimBySerial() {
       setSubmitting(false);
     }
   }
+
+  if (!authEmail) return <MagicLinkGate onReady={setAuthEmail} />;
 
   if (result) {
     return (
@@ -245,10 +247,6 @@ export default function ClaimBySerial() {
         <label>
           Your name
           <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} required style={inputStyle} />
-        </label>
-        <label>
-          Email or phone
-          <input value={ownerContact} onChange={(e) => setOwnerContact(e.target.value)} required style={inputStyle} />
         </label>
         <label>
           Reference photo

@@ -2,411 +2,96 @@
 
 import { useEffect, useState } from "react";
 import { getThing, checkIdentity, claimThing, mediaUrl, requestTransfer, confirmTransfer } from "../../../lib/api";
+import MagicLinkGate from "../../../components/MagicLinkGate";
 
 type Thing = {
-  onekey_code: string;
-  name: string;
-  status: string;
-  owner_display_name: string;
-  identity_type: "serial" | "barcode" | "qr_tag";
-  identity_value: string;
-  created_at: string;
-  history: { type: string; detail?: string; created_at: string }[];
-  documents: { label: string; url?: string | null; body?: string | null; uploaded_at: string }[];
-  photos: { url: string; is_primary: boolean; created_at: string }[];
+  onekey_code:string; name:string; status:string; owner_display_name:string;
+  identity_type:"serial"|"barcode"|"qr_tag"; identity_value:string; created_at:string;
+  history:{type:string;detail?:string;created_at:string}[];
+  documents:{label:string;url?:string|null;body?:string|null;uploaded_at:string}[];
+  photos:{url:string;is_primary:boolean;created_at:string}[];
 };
 
-export default function ThingPage({ params }: { params: { code: string } }) {
-  const { code } = params;
-  const [loading, setLoading] = useState(true);
-  const [thing, setThing] = useState<Thing | null>(null);
+const dateTime=(v:string)=>new Date(v).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"});
 
-  useEffect(() => {
-    getThing(code)
-      .then(setThing)
-      .finally(() => setLoading(false));
-  }, [code]);
-
-  if (loading) return <Centered>Loading…</Centered>;
-  if (thing) return <KnownThing thing={thing} />;
-  return <UnclaimedThing code={code} />;
+export default function ThingPage({params}:{params:{code:string}}){
+  const [loading,setLoading]=useState(true), [thing,setThing]=useState<Thing|null>(null);
+  useEffect(()=>{getThing(params.code).then(setThing).finally(()=>setLoading(false));},[params.code]);
+  if(loading) return <main className="claim"><div className="eyebrow">ONEKEY RECORD</div><p className="empty">Retrieving memory…</p></main>;
+  return thing ? <KnownThing thing={thing}/> : <UnclaimedThing code={params.code}/>;
 }
 
-function Centered({ children }: { children: React.ReactNode }) {
-  return <main style={{ maxWidth: 480, margin: "0 auto", padding: "3rem 1.5rem" }}>{children}</main>;
-}
-
-function KnownThing({ thing }: { thing: Thing }) {
-  const primaryPhoto = thing.photos.find((p) => p.is_primary) || thing.photos[0];
-  const [confirmationMessage, setConfirmationMessage] = useState<string | null>(null);
-  const [confirmationError, setConfirmationError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const transferId = params.get("transfer");
-    const token = params.get("token");
-    if (!transferId || !token) return;
-
-    let active = true;
-    confirmTransfer(transferId, token)
-      .then((result) => {
-        if (!active) return;
-        if (result.status === "completed") {
-          setConfirmationMessage(result.message || "Ownership transfer confirmed. The ONEKEY record is now updated.");
-        } else {
-          setConfirmationMessage(result.message || "Your confirmation is recorded.");
-        }
-      })
-      .catch((err: any) => {
-        if (active) setConfirmationError(err.message || "Transfer confirmation failed.");
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [thing.onekey_code]);
-
-  return (
-    <Centered>
-      {confirmationMessage && (
-        <p style={{ background: "#18351f", padding: "0.8rem", borderRadius: 8 }}>
-          {confirmationMessage}
-        </p>
-      )}
-      {confirmationError && (
-        <p style={{ background: "#3a2020", padding: "0.8rem", borderRadius: 8, color: "#f2b8b5" }}>
-          {confirmationError}
-        </p>
-      )}
-
-      {primaryPhoto && (
-        <img
-          src={mediaUrl(primaryPhoto.url, thing.onekey_code)}
-          alt={thing.name}
-          style={{ width: "100%", borderRadius: 12, marginBottom: "1rem", objectFit: "cover", maxHeight: 320 }}
-        />
-      )}
-      <h1 style={{ marginBottom: 0 }}>{thing.name}</h1>
-      <p style={{ opacity: 0.6, marginTop: 4 }}>ONEKEY #{thing.onekey_code}</p>
-
-      <Row label="Owner" value={thing.owner_display_name} />
-      <Row
-        label={thing.identity_type === "serial" ? "Serial number" : thing.identity_type === "barcode" ? "Barcode" : "QR tag"}
-        value={thing.identity_value}
-      />
-      <Row label="Status" value={thing.status} />
-      <Row label="Created" value={formatDateTime(thing.created_at)} />
-
-      <TransferOwnership
-        code={thing.onekey_code}
-        currentOwnerName={thing.owner_display_name}
-        onTransferred={() => window.location.reload()}
-      />
-
-      <section style={{ marginTop: "2rem" }}>
-        <h3>Documents</h3>
-        {thing.documents.length === 0 ? (
-          <p style={{ opacity: 0.6 }}>No documents added yet.</p>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            {thing.documents.map((doc, i) => (
-              <div key={i} style={{ borderBottom: "1px solid #2a2a2e", paddingBottom: "0.6rem" }}>
-                {doc.url ? (
-                  <a
-                    href={doc.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: "#8ab4f8", textDecoration: "none" }}
-                  >
-                    {doc.label} ↗
-                  </a>
-                ) : (
-                  <strong>{doc.label}</strong>
-                )}
-                {doc.body && <p style={{ margin: "0.3rem 0 0", opacity: 0.8 }}>{doc.body}</p>}
-                <div style={{ fontSize: "0.78rem", opacity: 0.55, marginTop: "0.2rem" }}>
-                  Added {formatDateTime(doc.uploaded_at)}
-                </div>
-              </div>
-            ))}
+function KnownThing({thing}:{thing:Thing}){
+  const photo=thing.photos.find(p=>p.is_primary)||thing.photos[0];
+  const [message,setMessage]=useState<string|null>(null),[error,setError]=useState<string|null>(null);
+  useEffect(()=>{
+    const q=new URLSearchParams(window.location.search), transferId=q.get("transfer"), token=q.get("token");
+    if(!transferId||!token)return;
+    confirmTransfer(transferId,token).then(r=>setMessage(r.message||"Ownership transfer confirmed.")).catch((e:any)=>setError(e.message||"Transfer confirmation failed."));
+  },[thing.onekey_code]);
+  return <main className="record">
+    <div className="onekey-container">
+      {message&&<div className="success" style={{marginBottom:16}}>{message}</div>}
+      {error&&<div className="alert" style={{marginBottom:16}}>{error}</div>}
+      <div className="record-grid">
+        <div className="media">{photo?<img src={mediaUrl(photo.url,thing.onekey_code)} alt={thing.name}/>:<div className="media-empty">No reference image</div>}</div>
+        <div className="record-panel">
+          <div className="eyebrow">ONEKEY / {thing.onekey_code}</div>
+          <h1 className="record-title">{thing.name}</h1>
+          <div className="status">{thing.status}</div>
+          <div className="meta">
+            <div className="meta-card"><span>Owner</span><strong>{thing.owner_display_name}</strong></div>
+            <div className="meta-card"><span>Identity</span><strong>{thing.identity_value}</strong></div>
+            <div className="meta-card"><span>Created</span><strong>{dateTime(thing.created_at)}</strong></div>
+            <div className="meta-card"><span>Record</span><strong className="mono">#{thing.onekey_code}</strong></div>
           </div>
-        )}
-      </section>
-
-      <h3 style={{ marginTop: "2rem" }}>History</h3>
-      <ul style={{ paddingLeft: "1.2rem", opacity: 0.85 }}>
-        {thing.history.map((h, i) => (
-          <li key={i} style={{ marginBottom: "0.55rem" }}>
-            {h.type.replace(/_/g, " ")}
-            {h.detail ? ` — ${h.detail}` : ""} · {formatDateTime(h.created_at)}
-          </li>
-        ))}
-      </ul>
-    </Centered>
-  );
-}
-
-function TransferOwnership({
-  code,
-  currentOwnerName,
-  onTransferred,
-}: {
-  code: string;
-  currentOwnerName: string;
-  onTransferred: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [currentOwnerContact, setCurrentOwnerContact] = useState("");
-  const [newOwnerName, setNewOwnerName] = useState("");
-  const [newOwnerContact, setNewOwnerContact] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [sent, setSent] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-
-    try {
-      const result = await requestTransfer(code, {
-        current_owner_contact: currentOwnerContact.trim(),
-        new_owner_contact: newOwnerContact.trim(),
-        new_owner_display_name: newOwnerName.trim(),
-      });
-
-      if (!result.transfer_id) throw new Error("Could not create transfer request.");
-      setSent(true);
-    } catch (err: any) {
-      setError(err.message || "Could not start the transfer.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (!open) {
-    return (
-      <button onClick={() => setOpen(true)} style={{ ...secondaryBtn, marginTop: "0.75rem" }}>
-        Transfer ownership
-      </button>
-    );
-  }
-
-  if (sent) {
-    return (
-      <div style={{ marginTop: "1rem", padding: "0.9rem", border: "1px solid #2a2a2e", borderRadius: 10 }}>
-        <strong>Transfer request sent.</strong>
-        <p style={{ opacity: 0.7, fontSize: "0.9rem", marginBottom: 0 }}>
-          A confirmation email has been sent to {currentOwnerContact} and another to {newOwnerContact}.
-          Ownership will change only after both people confirm through their email.
-        </p>
-      </div>
-    );
-  }
-
-  return (
-    <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "0.65rem", marginTop: "1rem" }}>
-      <p style={{ opacity: 0.65, fontSize: "0.85rem", margin: 0 }}>
-        This transfer requires confirmation from both the current owner and the new owner.
-      </p>
-      <label>
-        Current owner's email
-        <input
-          type="email"
-          value={currentOwnerContact}
-          onChange={(e) => setCurrentOwnerContact(e.target.value)}
-          required
-          style={inputStyle}
-        />
-      </label>
-      <label>
-        New owner's name
-        <input value={newOwnerName} onChange={(e) => setNewOwnerName(e.target.value)} required style={inputStyle} />
-      </label>
-      <label>
-        New owner's email
-        <input
-          type="email"
-          value={newOwnerContact}
-          onChange={(e) => setNewOwnerContact(e.target.value)}
-          required
-          style={inputStyle}
-        />
-      </label>
-      {error && <p style={{ color: "#f28b82" }}>{error}</p>}
-      <div style={{ display: "flex", gap: "0.5rem" }}>
-        <button type="submit" disabled={submitting} style={btnStyle}>
-          {submitting ? "Sending confirmations…" : "Start transfer"}
-        </button>
-        <button type="button" onClick={() => setOpen(false)} style={secondaryBtn}>
-          Cancel
-        </button>
-      </div>
-    </form>
-  );
-}
-
-function formatDateTime(value: string) {
-  return new Date(value).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
-}
-
-function Row({ label, value }: { label: string; value: string }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid #2a2a2e", padding: "0.5rem 0" }}>
-      <span style={{ opacity: 0.6 }}>{label}</span>
-      <span>{value}</span>
-    </div>
-  );
-}
-
-function UnclaimedThing({ code }: { code: string }) {
-  const [hasSerial, setHasSerial] = useState<boolean | null>(null);
-  const [identityValue, setIdentityValue] = useState("");
-  const [identityConflict, setIdentityConflict] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [ownerName, setOwnerName] = useState("");
-  const [ownerContact, setOwnerContact] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  async function checkSerial() {
-    if (!identityValue) return;
-    const res = await checkIdentity("serial", identityValue);
-    setIdentityConflict(res.available ? null : res.existing_onekey_code || "another record");
-  }
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!photo) return setError("A reference photo is required.");
-    setSubmitting(true);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("name", name);
-      form.append("owner_contact", ownerContact);
-      form.append("owner_display_name", ownerName);
-      form.append("photo", photo);
-      if (hasSerial) {
-        form.append("identity_type", "serial");
-        form.append("identity_value", identityValue);
-      } else {
-        form.append("identity_type", "qr_tag");
-        form.append("tag_code", code); // bind identity to the physical tag that was scanned
-      }
-      const res = await claimThing(form);
-      setResult(res);
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (result) {
-    return (
-      <Centered>
-        <h1>This thing has a memory now.</h1>
-        <p>ONEKEY #{result.onekey_code}</p>
-        {result.photo_warning && (
-          <p style={{ background: "#3a2a10", padding: "0.75rem", borderRadius: 8 }}>
-            Heads up: this photo looks similar to ONEKEY #{result.photo_warning.similar_thing_code}
-            (distance {result.photo_warning.distance}). Just make sure this is actually a different item.
-          </p>
-        )}
-        <a href={`/t/${result.onekey_code}`} style={{ color: "#8ab4f8" }}>View the record →</a>
-      </Centered>
-    );
-  }
-
-  return (
-    <Centered>
-      <h1>This thing has no memory yet.</h1>
-      <p style={{ opacity: 0.7 }}>Create its ONEKEY.</p>
-
-      {hasSerial === null && (
-        <div style={{ display: "flex", gap: "0.75rem", marginTop: "1.5rem" }}>
-          <button onClick={() => setHasSerial(true)} style={btnStyle}>It has a serial/barcode</button>
-          <button onClick={() => setHasSerial(false)} style={btnStyle}>No serial — use this QR tag</button>
+          <TransferOwnership code={thing.onekey_code} onTransferred={()=>window.location.reload()}/>
+          <section className="section"><h3>Documents</h3>
+            {thing.documents.length===0?<p className="empty">No documents added yet.</p>:thing.documents.map((d,i)=><div className="doc" key={i}>
+              <div>{d.url?<a href={d.url} target="_blank" rel="noreferrer">{d.label} ↗</a>:<span>{d.label}</span>}{d.body&&<div className="event-detail">{d.body}</div>}</div>
+              <span className="event-time">{dateTime(d.uploaded_at)}</span>
+            </div>)}
+          </section>
+          <section className="section"><h3>History</h3>
+            <div className="timeline">{thing.history.map((h,i)=><div className="event" key={i}><span className="event-dot"/><div><div className="event-title">{h.type.replace(/_/g," ")}</div>{h.detail&&<div className="event-detail">{h.detail}</div>}</div><span className="event-time">{dateTime(h.created_at)}</span></div>)}</div>
+          </section>
         </div>
-      )}
-
-      {hasSerial !== null && (
-        <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginTop: "1.5rem" }}>
-          {hasSerial && (
-            <>
-              <label>
-                Serial / barcode
-                <input
-                  value={identityValue}
-                  onChange={(e) => setIdentityValue(e.target.value)}
-                  onBlur={checkSerial}
-                  required
-                  style={inputStyle}
-                />
-              </label>
-              {identityConflict && (
-                <p style={{ color: "#f28b82" }}>
-                  Already claimed as ONEKEY #{identityConflict}.{" "}
-                  <a href={`/t/${identityConflict}`} style={{ color: "#8ab4f8" }}>View it</a> instead of creating a duplicate.
-                </p>
-              )}
-            </>
-          )}
-
-          <label>
-            Name this thing
-            <input value={name} onChange={(e) => setName(e.target.value)} required style={inputStyle} />
-          </label>
-          <label>
-            Your name
-            <input value={ownerName} onChange={(e) => setOwnerName(e.target.value)} required style={inputStyle} />
-          </label>
-          <label>
-            Email or phone
-            <input value={ownerContact} onChange={(e) => setOwnerContact(e.target.value)} required style={inputStyle} />
-          </label>
-          <label>
-            Reference photo
-            <input type="file" accept="image/*" onChange={(e) => setPhoto(e.target.files?.[0] || null)} required style={inputStyle} />
-          </label>
-
-          {error && <p style={{ color: "#f28b82" }}>{error}</p>}
-
-          <button type="submit" disabled={submitting || !!identityConflict} style={{ ...btnStyle, marginTop: "0.5rem" }}>
-            {submitting ? "Creating…" : "Create ONEKEY"}
-          </button>
-        </form>
-      )}
-    </Centered>
-  );
+      </div>
+    </div>
+  </main>;
 }
 
-const inputStyle: React.CSSProperties = {
-  display: "block",
-  width: "100%",
-  marginTop: 4,
-  padding: "0.5rem",
-  borderRadius: 6,
-  border: "1px solid #3a3a3e",
-  background: "#1a1a1d",
-  color: "#f2f2f2",
-};
+function TransferOwnership({code,onTransferred}:{code:string;onTransferred:()=>void}){
+  const [open,setOpen]=useState(false),[current,setCurrent]=useState(""),[name,setName]=useState(""),[contact,setContact]=useState(""),[submitting,setSubmitting]=useState(false),[sent,setSent]=useState(false),[error,setError]=useState<string|null>(null);
+  async function submit(e:React.FormEvent){e.preventDefault();setSubmitting(true);setError(null);try{const r=await requestTransfer(code,{current_owner_contact:current.trim(),new_owner_contact:contact.trim(),new_owner_display_name:name.trim()});if(!r.transfer_id)throw new Error("Could not create transfer request.");setSent(true);}catch(e:any){setError(e.message||"Could not start the transfer.");}finally{setSubmitting(false);}}
+  if(!open)return <button className="secondary-btn" onClick={()=>setOpen(true)}>Transfer ownership</button>;
+  if(sent)return <div className="success">Transfer request sent. Both parties must confirm before ownership changes.</div>;
+  return <form className="form-stack" onSubmit={submit}>
+    <p className="empty">Confirmation is required from the current owner and the new owner.</p>
+    <div className="field"><label>CURRENT OWNER EMAIL</label><input className="input" type="email" value={current} onChange={e=>setCurrent(e.target.value)} required/></div>
+    <div className="field"><label>NEW OWNER NAME</label><input className="input" value={name} onChange={e=>setName(e.target.value)} required/></div>
+    <div className="field"><label>NEW OWNER EMAIL</label><input className="input" type="email" value={contact} onChange={e=>setContact(e.target.value)} required/></div>
+    {error&&<div className="alert">{error}</div>}
+    <div style={{display:"flex",gap:8}}><button className="primary-btn" disabled={submitting}>{submitting?"Sending…":"Start transfer"}</button><button type="button" className="secondary-btn" onClick={()=>setOpen(false)}>Cancel</button></div>
+  </form>;
+}
 
-const btnStyle: React.CSSProperties = {
-  padding: "0.6rem 1rem",
-  borderRadius: 8,
-  border: "1px solid #3a3a3e",
-  background: "#1a1a1d",
-  color: "#f2f2f2",
-  cursor: "pointer",
-};
-
-const secondaryBtn: React.CSSProperties = {
-  ...btnStyle,
-  background: "transparent",
-};
+function UnclaimedThing({code}:{code:string}){
+  const [authEmail,setAuthEmail]=useState<string|null>(null), [hasSerial,setHasSerial]=useState<boolean|null>(null),[identity,setIdentity]=useState(""),[conflict,setConflict]=useState<string|null>(null),[name,setName]=useState(""),[owner,setOwner]=useState(""),[contact,setContact]=useState(""),[photo,setPhoto]=useState<File|null>(null),[submitting,setSubmitting]=useState(false),[result,setResult]=useState<any>(null),[error,setError]=useState<string|null>(null);
+  async function check(){if(!identity)return;const r=await checkIdentity("serial",identity);setConflict(r.available?null:r.existing_onekey_code||"another record");}
+  async function submit(e:React.FormEvent){e.preventDefault();if(!photo)return setError("A reference photo is required.");setSubmitting(true);setError(null);try{const f=new FormData();f.append("name",name);f.append("owner_contact",contact);f.append("owner_display_name",owner);f.append("photo",photo);if(hasSerial){f.append("identity_type","serial");f.append("identity_value",identity)}else{f.append("identity_type","qr_tag");f.append("tag_code",code)}setResult(await claimThing(f));}catch(e:any){setError(e.message)}finally{setSubmitting(false)}}
+  if(!authEmail)return <MagicLinkGate onReady={setAuthEmail}/>;
+  if(result)return <main className="claim"><div className="eyebrow">MEMORY CREATED</div><h1>This thing has a memory now.</h1><p className="empty mono">ONEKEY #{result.onekey_code}</p>{result.photo_warning&&<div className="alert">This reference photo looks similar to ONEKEY #{result.photo_warning.similar_thing_code}. Please confirm this is a different item.</div>}<a className="primary-btn" style={{display:"inline-flex",alignItems:"center",textDecoration:"none",marginTop:22}} href={`/t/${result.onekey_code}`}>View the record →</a></main>;
+  return <main className="claim">
+    <div className="eyebrow">UNCLAIMED THING / {code}</div><h1>This thing has no memory yet.</h1><p className="empty">Create its ONEKEY and give it a persistent record.</p>
+    {hasSerial===null?<div className="choice-grid" style={{marginTop:28}}><button className="secondary-btn" onClick={()=>setHasSerial(true)}>It has a serial / barcode</button><button className="secondary-btn" onClick={()=>setHasSerial(false)}>No serial — use this QR</button></div>:
+    <form className="form-stack" onSubmit={submit}>
+      {hasSerial&&<><div className="field"><label>SERIAL / BARCODE</label><input className="input" value={identity} onChange={e=>setIdentity(e.target.value)} onBlur={check} required/></div>{conflict&&<div className="alert">Already claimed as ONEKEY #{conflict}. <a href={`/t/${conflict}`}>View it instead.</a></div>}</>}
+      <div className="field"><label>NAME THIS THING</label><input className="input" value={name} onChange={e=>setName(e.target.value)} required placeholder="e.g. Leica M6"/></div>
+      <div className="field"><label>YOUR NAME</label><input className="input" value={owner} onChange={e=>setOwner(e.target.value)} required/></div>
+      
+      <div className="field"><label>REFERENCE PHOTO</label><input className="input" type="file" accept="image/*" onChange={e=>setPhoto(e.target.files?.[0]||null)} required/></div>
+      {error&&<div className="alert">{error}</div>}<button className="primary-btn" disabled={submitting||!!conflict}>{submitting?"Creating…":"Create ONEKEY"}</button>
+    </form>}
+  </main>;
+}
