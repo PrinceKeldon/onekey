@@ -89,14 +89,16 @@ def check_identity(payload: schemas.IdentityCheckRequest, db: Session = Depends(
 @router.post("/claim", response_model=schemas.ClaimResponse)
 def claim_thing(
     name: str = Form(...),
-    owner_contact: str = Form(...),
+    owner_contact: str | None = Form(None),
     owner_display_name: str = Form(...),
+    authorization: str | None = Header(None),
     identity_type: str = Form(...),
     identity_value: str = Form(None),
     tag_code: str = Form(None),  # set when claiming a pre-printed, already-scanned QR (e.g. from /t/{code})
     photo: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
+    authenticated_email = get_authenticated_email(authorization)
     if identity_type not in ("serial", "barcode", "qr_tag"):
         raise HTTPException(400, "invalid identity_type")
 
@@ -112,7 +114,9 @@ def claim_thing(
     else:
         final_identity_value = identity_value
 
-    owner = _get_or_create_user(db, owner_contact, owner_display_name)
+    # The signed-in Supabase identity is the owner contact. Ignore any client-supplied
+    # contact value so a caller cannot create a record attributed to another email.
+    owner = _get_or_create_user(db, authenticated_email, owner_display_name)
 
     # --- Photo: save + perceptual hash + similarity check (soft warning only) ---
     image_bytes = photo.file.read()
