@@ -9,13 +9,11 @@ export default function AuthCallback() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const code = params.get("code");
-    const next = params.get("next") || "/";
-    if (!code) { setError("This sign-in link is missing its verification code."); return; }
-    supabase.auth.exchangeCodeForSession(code).then(({ error: authError }) => {
+    const next = new URLSearchParams(window.location.search).get("next") || "/";
+    supabase.auth.getSession().then(({ data, error: authError }) => {
       if (authError) setError(authError.message);
-      else router.replace(next);
+      else if (data.session?.user?.email) router.replace(next);
+      else setError("This sign-in link could not create a session. Please request a new one.");
     });
   }, [router]);
 
