@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { getThing, checkIdentity, claimThing, mediaUrl, requestTransfer, confirmTransfer } from "../../../lib/api";
+import MagicLinkGate from "../../../components/MagicLinkGate";
 
 type Thing = {
   onekey_code:string; name:string; status:string; owner_display_name:string;
@@ -76,9 +77,10 @@ function TransferOwnership({code,onTransferred}:{code:string;onTransferred:()=>v
 }
 
 function UnclaimedThing({code}:{code:string}){
-  const [hasSerial,setHasSerial]=useState<boolean|null>(null),[identity,setIdentity]=useState(""),[conflict,setConflict]=useState<string|null>(null),[name,setName]=useState(""),[owner,setOwner]=useState(""),[contact,setContact]=useState(""),[photo,setPhoto]=useState<File|null>(null),[submitting,setSubmitting]=useState(false),[result,setResult]=useState<any>(null),[error,setError]=useState<string|null>(null);
+  const [authEmail,setAuthEmail]=useState<string|null>(null), [hasSerial,setHasSerial]=useState<boolean|null>(null),[identity,setIdentity]=useState(""),[conflict,setConflict]=useState<string|null>(null),[name,setName]=useState(""),[owner,setOwner]=useState(""),[contact,setContact]=useState(""),[photo,setPhoto]=useState<File|null>(null),[submitting,setSubmitting]=useState(false),[result,setResult]=useState<any>(null),[error,setError]=useState<string|null>(null);
   async function check(){if(!identity)return;const r=await checkIdentity("serial",identity);setConflict(r.available?null:r.existing_onekey_code||"another record");}
   async function submit(e:React.FormEvent){e.preventDefault();if(!photo)return setError("A reference photo is required.");setSubmitting(true);setError(null);try{const f=new FormData();f.append("name",name);f.append("owner_contact",contact);f.append("owner_display_name",owner);f.append("photo",photo);if(hasSerial){f.append("identity_type","serial");f.append("identity_value",identity)}else{f.append("identity_type","qr_tag");f.append("tag_code",code)}setResult(await claimThing(f));}catch(e:any){setError(e.message)}finally{setSubmitting(false)}}
+  if(!authEmail)return <MagicLinkGate onReady={setAuthEmail}/>;
   if(result)return <main className="claim"><div className="eyebrow">MEMORY CREATED</div><h1>This thing has a memory now.</h1><p className="empty mono">ONEKEY #{result.onekey_code}</p>{result.photo_warning&&<div className="alert">This reference photo looks similar to ONEKEY #{result.photo_warning.similar_thing_code}. Please confirm this is a different item.</div>}<a className="primary-btn" style={{display:"inline-flex",alignItems:"center",textDecoration:"none",marginTop:22}} href={`/t/${result.onekey_code}`}>View the record →</a></main>;
   return <main className="claim">
     <div className="eyebrow">UNCLAIMED THING / {code}</div><h1>This thing has no memory yet.</h1><p className="empty">Create its ONEKEY and give it a persistent record.</p>
@@ -87,7 +89,7 @@ function UnclaimedThing({code}:{code:string}){
       {hasSerial&&<><div className="field"><label>SERIAL / BARCODE</label><input className="input" value={identity} onChange={e=>setIdentity(e.target.value)} onBlur={check} required/></div>{conflict&&<div className="alert">Already claimed as ONEKEY #{conflict}. <a href={`/t/${conflict}`}>View it instead.</a></div>}</>}
       <div className="field"><label>NAME THIS THING</label><input className="input" value={name} onChange={e=>setName(e.target.value)} required placeholder="e.g. Leica M6"/></div>
       <div className="field"><label>YOUR NAME</label><input className="input" value={owner} onChange={e=>setOwner(e.target.value)} required/></div>
-      <div className="field"><label>EMAIL OR PHONE</label><input className="input" value={contact} onChange={e=>setContact(e.target.value)} required/></div>
+      
       <div className="field"><label>REFERENCE PHOTO</label><input className="input" type="file" accept="image/*" onChange={e=>setPhoto(e.target.files?.[0]||null)} required/></div>
       {error&&<div className="alert">{error}</div>}<button className="primary-btn" disabled={submitting||!!conflict}>{submitting?"Creating…":"Create ONEKEY"}</button>
     </form>}
