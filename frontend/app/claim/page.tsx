@@ -96,9 +96,7 @@ export default function ClaimBySerial() {
       setScanning(true);
 
       const controls = await reader.decodeFromStream(stream, videoRef.current!, (result, err, ctrl) => {
-        if (!authEmail) return <MagicLinkGate onReady={setAuthEmail} />;
-
-  if (result) {
+        if (result) {
           const text = result.getText();
           ctrl.stop();
           stopBarcodeScan();
@@ -156,6 +154,8 @@ export default function ClaimBySerial() {
       setSubmitting(false);
     }
   }
+
+  if (!authEmail) return <MagicLinkGate onReady={setAuthEmail} />;
 
   if (result) {
     return (
